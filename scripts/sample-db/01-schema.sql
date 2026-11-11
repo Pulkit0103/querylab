@@ -79,9 +79,10 @@ JOIN sales.customers c ON c.id = o.customer_id
 WHERE o.status <> 'cancelled'
 GROUP BY c.country;
 
-ANALYZE;
+ANALYZE public.departments, public.employees, sales.customers, sales.orders;
 
 -- Least-privilege role intended for QueryLab connections.
+-- (Requires the script runner to have CREATEROLE, e.g. the container superuser.)
 CREATE ROLE querylab_reader LOGIN PASSWORD 'reader_password';
 ALTER ROLE querylab_reader SET default_transaction_read_only = on;
 GRANT CONNECT ON DATABASE sampledb TO querylab_reader;
