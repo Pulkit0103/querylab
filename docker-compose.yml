@@ -1,0 +1,45 @@
+# Local development services.
+#
+#   docker compose up -d            -> metadata DB (5432) + sample target DB (5433)
+#   docker compose --profile full up -> also builds and runs the API container
+services:
+  metadata-db:
+    image: postgres:17-alpine
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: querylab
+      POSTGRES_PASSWORD: querylab
+      POSTGRES_DB: querylab
+    ports:
+      - "5432:5432"
+    volumes:
+      - metadata-data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U querylab -d querylab"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+
+  # A separate PostgreSQL instance with demo data that users can connect to
+  # from QueryLab. Seeded with a least-privilege, read-only role.
+  sample-db:
+    image: postgres:17-alpine
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: sample_owner
+      POSTGRES_PASSWORD: sample_owner
+      POSTGRES_DB: sampledb
+    ports:
+      - "5433:5432"
+    volumes:
+      - sample-data:/var/lib/postgresql/data
+      - ./scripts/sample-db:/docker-entrypoint-initdb.d:ro
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U sample_owner -d sampledb"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+
+volumes:
+  metadata-data:
+  sample-data:

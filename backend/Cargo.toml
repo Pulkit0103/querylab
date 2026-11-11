@@ -1,0 +1,49 @@
+[package]
+name = "querylab-api"
+version = "0.1.0"
+edition = "2021"
+rust-version = "1.80"
+description = "QueryLab API - browser-based SQL playground backend"
+license = "MIT"
+publish = false
+
+[lib]
+name = "querylab_api"
+path = "src/lib.rs"
+
+[[bin]]
+name = "querylab-api"
+path = "src/main.rs"
+
+[dependencies]
+axum = "0.8"
+tokio = { version = "1", features = ["macros", "rt-multi-thread", "signal", "net", "time"] }
+tower = { version = "0.5", features = ["util"] }
+tower-http = { version = "0.6", features = ["cors", "trace", "request-id", "timeout", "limit", "util"] }
+sqlx = { version = "0.8", default-features = false, features = [
+    "runtime-tokio",
+    "tls-native-tls",
+    "postgres",
+    "macros",
+    "migrate",
+    "derive",
+    "uuid",
+    "chrono",
+    "json",
+] }
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+tracing = "0.1"
+tracing-subscriber = { version = "0.3", features = ["env-filter", "json", "fmt"] }
+uuid = { version = "1", features = ["v4", "serde"] }
+chrono = { version = "0.4", default-features = false, features = ["clock", "serde", "std"] }
+thiserror = "2"
+dotenvy = "0.15"
+
+[dev-dependencies]
+http-body-util = "0.1"
+
+[profile.release]
+lto = "thin"
+codegen-units = 1
+strip = true
