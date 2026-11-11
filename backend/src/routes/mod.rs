@@ -1,6 +1,7 @@
 //! Route table and cross-cutting HTTP middleware.
 
 use axum::{
+    extract::DefaultBodyLimit,
     http::{header, HeaderName, HeaderValue, Method},
     routing::get,
     Router,
@@ -16,12 +17,19 @@ use crate::{handlers, state::AppState};
 
 const REQUEST_ID: HeaderName = HeaderName::from_static("x-request-id");
 
+/// Maximum accepted request body (SQL text is capped at 1 MiB separately).
+const MAX_BODY_BYTES: usize = 2 * 1024 * 1024;
+
 pub fn build_router(state: AppState) -> Router {
-    let api = Router::new().route("/health", get(handlers::health::health));
+    let api = Router::new()
+        .route("/health", get(handlers::health::health))
+        .route("/version", get(handlers::version::version));
 
     Router::new()
         .route("/health", get(handlers::health::health))
         .nest("/api", api)
+        .fallback(handlers::not_found)
+        .layer(DefaultBodyLimit::max(MAX_BODY_BYTES))
         .layer(TimeoutLayer::with_status_code(
             axum::http::StatusCode::REQUEST_TIMEOUT,
             state.config.request_timeout,

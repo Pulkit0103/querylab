@@ -39,6 +39,9 @@ uuid = { version = "1", features = ["v4", "serde"] }
 chrono = { version = "0.4", default-features = false, features = ["clock", "serde", "std"] }
 thiserror = "2"
 dotenvy = "0.15"
+aes-gcm = "0.10"
+base64 = "0.22"
+zeroize = { version = "1", features = ["serde", "zeroize_derive"] }
 
 [dev-dependencies]
 http-body-util = "0.1"

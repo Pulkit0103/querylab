@@ -79,19 +79,70 @@ Open `http://localhost:3000`.
 ## Testing
 
 ```bash
-# Backend
+# Backend: unit + offline API tests
 cd backend && cargo test
+
+# Backend: include database-backed tests. DATABASE_URL must point at a
+# PostgreSQL 15+ server where the role can CREATE DATABASE (each test gets
+# its own throwaway database).
+DATABASE_URL=postgres://querylab:querylab@localhost:5432/querylab \
+  cargo test -- --include-ignored
 
 # Frontend
 cd frontend && npm run lint && npm run build
 ```
 
+## Backend architecture
+
+```
+src/
+├── main.rs        binary entry: config, telemetry, migrations, server
+├── lib.rs         library crate (router is constructible in tests)
+├── config/        environment configuration
+├── routes/        route table + cross-cutting middleware (CORS, tracing, limits)
+├── handlers/      HTTP layer: extract/validate input, call services
+├── services/      business logic (ownership, encryption, execution rules)
+├── database/      pool, migrations and repositories (parameterised SQL only)
+├── models/        DB records and API DTOs (+ validation)
+├── errors/        AppError → consistent JSON error envelope
+└── utils/         crypto (AES-256-GCM), validation helpers
+```
+
+**Error envelope** — every non-2xx response has the same shape:
+
+```json
+{ "error": { "code": "validation_error", "message": "request validation failed",
+             "details": { "fields": [{ "field": "host", "message": "..." }] } } }
+```
+
+**Credential encryption** — connection passwords are encrypted with
+AES-256-GCM using a random 96-bit nonce. The associated data binds each
+ciphertext to its owner and connection id, so a ciphertext copied to another
+row fails to decrypt. Keys carry an id, so `ENCRYPTION_PREVIOUS_KEYS` lets you
+rotate keys without downtime.
+
+## Configuration (backend)
+
+| Variable                   | Default                  | Description |
+| -------------------------- | ------------------------ | ----------- |
+| `DATABASE_URL`             | —                        | Metadata database (required) |
+| `ENCRYPTION_KEY`           | —                        | Base64 32-byte key (required; dev key rejected in production) |
+| `ENCRYPTION_KEY_ID`        | `1`                      | Id stamped on new ciphertexts |
+| `ENCRYPTION_PREVIOUS_KEYS` | —                        | `id:base64,...` keys accepted for decryption |
+| `RUN_MIGRATIONS`           | `true`                   | Apply migrations on startup |
+| `APP_ENV`                  | `development`            | `production` enables JSON logs and strict checks |
+| `HOST` / `PORT`            | `0.0.0.0` / `8080`       | Bind address |
+| `CORS_ORIGINS`             | `http://localhost:3000`  | Comma-separated origins for direct API access |
+| `LOG_FORMAT`               | `pretty` (dev)           | `pretty` or `json` |
+| `REQUEST_TIMEOUT_SECS`     | `120`                    | Hard per-request timeout |
+
 ## API
 
-| Method | Path          | Description                               |
-| ------ | ------------- | ----------------------------------------- |
-| GET    | `/health`     | Liveness + metadata DB readiness (503 if degraded) |
-| GET    | `/api/health` | Same, reachable through the frontend proxy |
+| Method | Path           | Description                                        |
+| ------ | -------------- | -------------------------------------------------- |
+| GET    | `/health`      | Liveness + metadata DB readiness (503 if degraded) |
+| GET    | `/api/health`  | Same, reachable through the frontend proxy         |
+| GET    | `/api/version` | Build and API version                              |
 
 ## License
 

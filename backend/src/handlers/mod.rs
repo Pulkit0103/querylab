@@ -2,3 +2,11 @@
 //! map results to HTTP responses. No business logic lives here.
 
 pub mod health;
+pub mod version;
+
+use crate::errors::AppError;
+
+/// JSON 404 for unknown routes, matching the API error envelope.
+pub async fn not_found() -> AppError {
+    AppError::NotFound("route")
+}

@@ -17,7 +17,10 @@ async fn run() -> Result<(), Box<dyn std::error::Error>> {
     telemetry::init(&config.log_format);
 
     let pool = database::create_pool(&config)?;
-    if database::ping(&pool).await {
+    if config.run_migrations {
+        database::migrate(&pool, 10).await?;
+        tracing::info!("metadata database migrations applied");
+    } else if database::ping(&pool).await {
         tracing::info!("connected to metadata database");
     } else {
         tracing::warn!("metadata database is not reachable yet; continuing in degraded mode");
