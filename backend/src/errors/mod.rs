@@ -39,6 +39,8 @@ pub enum AppError {
     BadRequest(String),
     #[error("authentication required")]
     Unauthorized,
+    #[error("invalid email or password")]
+    InvalidCredentials,
     #[error("{0}")]
     Forbidden(String),
     #[error("{0} not found")]
@@ -52,7 +54,10 @@ pub enum AppError {
     #[error("{0}")]
     TargetUnavailable(String),
     #[error("query exceeded the {timeout_secs}s execution timeout")]
-    QueryTimeout { timeout_secs: u64, execution_time_ms: u64 },
+    QueryTimeout {
+        timeout_secs: u64,
+        execution_time_ms: u64,
+    },
     #[error("query was cancelled")]
     QueryCancelled { execution_time_ms: u64 },
     #[error("internal server error")]
@@ -75,7 +80,7 @@ impl AppError {
         match self {
             AppError::Validation(_) => StatusCode::UNPROCESSABLE_ENTITY,
             AppError::BadRequest(_) => StatusCode::BAD_REQUEST,
-            AppError::Unauthorized => StatusCode::UNAUTHORIZED,
+            AppError::Unauthorized | AppError::InvalidCredentials => StatusCode::UNAUTHORIZED,
             AppError::Forbidden(_) => StatusCode::FORBIDDEN,
             AppError::NotFound(_) => StatusCode::NOT_FOUND,
             AppError::Conflict(_) => StatusCode::CONFLICT,
@@ -94,6 +99,7 @@ impl AppError {
             AppError::Validation(_) => "validation_error",
             AppError::BadRequest(_) => "bad_request",
             AppError::Unauthorized => "unauthorized",
+            AppError::InvalidCredentials => "invalid_credentials",
             AppError::Forbidden(_) => "forbidden",
             AppError::NotFound(_) => "not_found",
             AppError::Conflict(_) => "conflict",
@@ -156,8 +162,12 @@ impl From<sqlx::Error> for AppError {
         match &err {
             sqlx::Error::RowNotFound => AppError::NotFound("resource"),
             sqlx::Error::Database(db) => match db.code().as_deref() {
-                Some("23505") => AppError::Conflict("a resource with the same name already exists".into()),
-                Some("23503") => AppError::BadRequest("a referenced resource does not exist".into()),
+                Some("23505") => {
+                    AppError::Conflict("a resource with the same name already exists".into())
+                }
+                Some("23503") => {
+                    AppError::BadRequest("a referenced resource does not exist".into())
+                }
                 Some("23514") | Some("22001") => {
                     AppError::BadRequest("a field value is out of the allowed range".into())
                 }
@@ -200,7 +210,10 @@ mod tests {
 
     #[test]
     fn rate_limited_sets_retry_after() {
-        let res = AppError::RateLimited { retry_after_secs: 7 }.into_response();
+        let res = AppError::RateLimited {
+            retry_after_secs: 7,
+        }
+        .into_response();
         assert_eq!(res.status(), StatusCode::TOO_MANY_REQUESTS);
         assert_eq!(res.headers().get(header::RETRY_AFTER).unwrap(), "7");
     }

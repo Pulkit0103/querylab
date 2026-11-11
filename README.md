@@ -121,6 +121,28 @@ ciphertext to its owner and connection id, so a ciphertext copied to another
 row fails to decrypt. Keys carry an id, so `ENCRYPTION_PREVIOUS_KEYS` lets you
 rotate keys without downtime.
 
+## Authentication
+
+- Passwords are hashed with **Argon2id** (hashing runs on a blocking thread).
+- Sessions are opaque 256-bit random tokens. Only a SHA-256 digest is stored,
+  so a database leak does not expose usable tokens. Sessions slide on
+  activity (`SESSION_TTL_HOURS`) up to an absolute cap (`SESSION_MAX_AGE_DAYS`)
+  and are revoked server-side on logout.
+- The token is delivered as an `HttpOnly; SameSite=Lax` cookie (`Secure` and
+  the `__Host-` prefix in production). API clients may instead send
+  `Authorization: Bearer <token>`.
+- **CSRF**: every state-changing `/api` request must carry `X-QueryLab-CSRF`.
+  Browsers cannot attach custom headers cross-site without a CORS preflight,
+  and preflights only succeed for `CORS_ORIGINS`.
+- Login is rate-limited per IP and per account; unknown emails and wrong
+  passwords produce identical responses and comparable timing.
+- Every resource query is scoped by `user_id` in SQL; another user's ids return
+  `404`, so ids cannot be probed.
+
+The frontend's `proxy.ts` redirects visitors without a session cookie to
+`/login`; the API remains the authority and a `401` anywhere sends the user
+back to sign in.
+
 ## Configuration (backend)
 
 | Variable                   | Default                  | Description |
@@ -135,6 +157,11 @@ rotate keys without downtime.
 | `CORS_ORIGINS`             | `http://localhost:3000`  | Comma-separated origins for direct API access |
 | `LOG_FORMAT`               | `pretty` (dev)           | `pretty` or `json` |
 | `REQUEST_TIMEOUT_SECS`     | `120`                    | Hard per-request timeout |
+| `SESSION_TTL_HOURS`        | `168`                    | Sliding session lifetime |
+| `SESSION_MAX_AGE_DAYS`     | `30`                     | Absolute session lifetime |
+| `COOKIE_SECURE`            | `true` in production     | `Secure` + `__Host-` session cookie |
+| `TRUSTED_PROXY_HOPS`       | `0`                      | Reverse proxies whose `X-Forwarded-For` entry is trusted |
+| `AUTH_RATE_LIMIT_PER_MINUTE` | `10`                   | Login/registration attempts per IP and per account |
 
 ## API
 
@@ -143,6 +170,17 @@ rotate keys without downtime.
 | GET    | `/health`      | Liveness + metadata DB readiness (503 if degraded) |
 | GET    | `/api/health`  | Same, reachable through the frontend proxy         |
 | GET    | `/api/version` | Build and API version                              |
+| POST   | `/api/auth/register` | Create an account and start a session        |
+| POST   | `/api/auth/login`    | Start a session                              |
+| POST   | `/api/auth/logout`   | Revoke the current session                   |
+| GET    | `/api/auth/me`       | Current user                                 |
+| GET    | `/api/connections`        | List the user's connections (no secrets) |
+| POST   | `/api/connections`        | Create a connection (password encrypted) |
+| GET    | `/api/connections/{id}`   | Get a connection                         |
+| PUT    | `/api/connections/{id}`   | Update; omit `password` to keep it       |
+| DELETE | `/api/connections/{id}`   | Delete a connection                      |
+
+All endpoints except health, version, register and login require a session.
 
 ## License
 

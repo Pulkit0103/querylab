@@ -96,6 +96,49 @@ where
     }
 }
 
+/// Path extractor whose rejection uses the API error envelope (e.g. for a
+/// malformed UUID) instead of axum's plain-text response.
+pub struct ApiPath<T>(pub T);
+
+impl<S, T> axum::extract::FromRequestParts<S> for ApiPath<T>
+where
+    T: DeserializeOwned + Send,
+    S: Send + Sync,
+{
+    type Rejection = AppError;
+
+    async fn from_request_parts(
+        parts: &mut axum::http::request::Parts,
+        state: &S,
+    ) -> Result<Self, Self::Rejection> {
+        axum::extract::Path::<T>::from_request_parts(parts, state)
+            .await
+            .map(|axum::extract::Path(v)| ApiPath(v))
+            .map_err(|rej| AppError::BadRequest(rej.body_text()))
+    }
+}
+
+/// Query-string extractor with API-envelope rejections.
+pub struct ApiQuery<T>(pub T);
+
+impl<S, T> axum::extract::FromRequestParts<S> for ApiQuery<T>
+where
+    T: DeserializeOwned,
+    S: Send + Sync,
+{
+    type Rejection = AppError;
+
+    async fn from_request_parts(
+        parts: &mut axum::http::request::Parts,
+        state: &S,
+    ) -> Result<Self, Self::Rejection> {
+        axum::extract::Query::<T>::from_request_parts(parts, state)
+            .await
+            .map(|axum::extract::Query(v)| ApiQuery(v))
+            .map_err(|rej| AppError::BadRequest(rej.body_text()))
+    }
+}
+
 /// Like [`ValidatedJson`] but without semantic validation.
 pub struct ApiJson<T>(pub T);
 

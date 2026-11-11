@@ -55,6 +55,16 @@ pub struct Config {
     pub encryption_key: EncryptionKey,
     /// Older keys still accepted for decryption during rotation.
     pub previous_encryption_keys: Vec<EncryptionKey>,
+    /// Sliding session lifetime.
+    pub session_ttl: Duration,
+    /// Hard cap on a session's lifetime regardless of activity.
+    pub session_absolute_max: Duration,
+    /// Mark the session cookie `Secure` (and use the `__Host-` prefix).
+    pub cookie_secure: bool,
+    /// Number of trusted reverse proxies appending to `X-Forwarded-For`.
+    pub trusted_proxy_hops: usize,
+    /// Login/registration attempts allowed per minute per IP and per account.
+    pub auth_rate_limit_per_minute: u32,
 }
 
 impl Config {
@@ -92,6 +102,7 @@ impl Config {
         };
 
         let (encryption_key, previous_encryption_keys) = load_encryption_keys(&environment)?;
+        let cookie_secure = parse_or("COOKIE_SECURE", environment.is_production())?;
 
         Ok(Self {
             environment,
@@ -104,6 +115,13 @@ impl Config {
             request_timeout: Duration::from_secs(parse_or("REQUEST_TIMEOUT_SECS", 120)?),
             encryption_key,
             previous_encryption_keys,
+            session_ttl: Duration::from_secs(parse_or::<u64>("SESSION_TTL_HOURS", 168)? * 3600),
+            session_absolute_max: Duration::from_secs(
+                parse_or::<u64>("SESSION_MAX_AGE_DAYS", 30)? * 86_400,
+            ),
+            cookie_secure,
+            trusted_proxy_hops: parse_or("TRUSTED_PROXY_HOPS", 0)?,
+            auth_rate_limit_per_minute: parse_or("AUTH_RATE_LIMIT_PER_MINUTE", 10)?,
         })
     }
 
@@ -122,6 +140,11 @@ impl Config {
             encryption_key: EncryptionKey::from_base64(1, DEV_ENCRYPTION_KEY)
                 .expect("dev key is valid"),
             previous_encryption_keys: Vec::new(),
+            session_ttl: Duration::from_secs(7 * 86_400),
+            session_absolute_max: Duration::from_secs(30 * 86_400),
+            cookie_secure: false,
+            trusted_proxy_hops: 0,
+            auth_rate_limit_per_minute: 1000,
         }
     }
 }

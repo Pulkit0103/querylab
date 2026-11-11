@@ -3,4 +3,5 @@
 //!
 //! [`AppState`]: crate::state::AppState
 
+pub mod auth;
 pub mod connections;

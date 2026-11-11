@@ -22,7 +22,10 @@ pub struct NewConnection<'a> {
     pub encrypted_credentials: &'a [u8],
 }
 
-pub async fn list_for_user(db: &PgPool, user_id: Uuid) -> Result<Vec<ConnectionRecord>, sqlx::Error> {
+pub async fn list_for_user(
+    db: &PgPool,
+    user_id: Uuid,
+) -> Result<Vec<ConnectionRecord>, sqlx::Error> {
     sqlx::query_as(&format!(
         "SELECT {COLUMNS} FROM database_connections WHERE user_id = $1 ORDER BY lower(name), created_at"
     ))
@@ -67,7 +70,10 @@ pub async fn insert(db: &PgPool, c: &NewConnection<'_>) -> Result<ConnectionReco
 }
 
 /// Replaces all mutable fields. Callers merge partial updates first.
-pub async fn update(db: &PgPool, c: &NewConnection<'_>) -> Result<Option<ConnectionRecord>, sqlx::Error> {
+pub async fn update(
+    db: &PgPool,
+    c: &NewConnection<'_>,
+) -> Result<Option<ConnectionRecord>, sqlx::Error> {
     sqlx::query_as(&format!(
         "UPDATE database_connections SET \
             name = $3, host = $4, port = $5, database_name = $6, username = $7, \

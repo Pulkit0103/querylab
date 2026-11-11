@@ -3,6 +3,7 @@
 //! `services`. All statements are parameterised.
 
 pub mod connections;
+pub mod sessions;
 pub mod users;
 
 use std::time::Duration;

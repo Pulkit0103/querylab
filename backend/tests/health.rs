@@ -30,8 +30,11 @@ async fn unknown_route_returns_json_404() {
 #[tokio::test]
 async fn version_endpoint() {
     let app = common::offline_app();
-    let (status, body) =
-        common::send(&app, Request::get("/api/version").body(Body::empty()).unwrap()).await;
+    let (status, body) = common::send(
+        &app,
+        Request::get("/api/version").body(Body::empty()).unwrap(),
+    )
+    .await;
     assert_eq!(status, 200);
     assert_eq!(body["name"], "querylab-api");
     assert_eq!(body["api_version"], "v1");

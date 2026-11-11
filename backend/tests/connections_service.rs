@@ -61,7 +61,10 @@ async fn credentials_are_encrypted_at_rest(pool: PgPool) {
     assert!(!json.contains("super-secret"));
 
     let record = svc.get_record(user, created.id).await.unwrap();
-    assert_eq!(svc.decrypt_secret(&record).unwrap().password, "super-secret-password");
+    assert_eq!(
+        svc.decrypt_secret(&record).unwrap().password,
+        "super-secret-password"
+    );
 }
 
 #[sqlx::test(migrator = "querylab_api::database::MIGRATOR")]
@@ -84,7 +87,10 @@ async fn ciphertext_is_bound_to_its_row(pool: PgPool) {
     .await
     .unwrap();
     let record = svc.get_record(user, b.id).await.unwrap();
-    assert!(matches!(svc.decrypt_secret(&record), Err(AppError::Internal(_))));
+    assert!(matches!(
+        svc.decrypt_secret(&record),
+        Err(AppError::Internal(_))
+    ));
 }
 
 #[sqlx::test(migrator = "querylab_api::database::MIGRATOR")]
@@ -108,7 +114,8 @@ async fn connections_are_isolated_per_user(pool: PgPool) {
         Err(AppError::NotFound("connection"))
     ));
     assert!(matches!(
-        svc.update(bob, conn.id, &UpdateConnectionRequest::default()).await,
+        svc.update(bob, conn.id, &UpdateConnectionRequest::default())
+            .await,
         Err(AppError::NotFound("connection"))
     ));
     // Alice still has it.
@@ -128,10 +135,14 @@ async fn update_keeps_password_unless_provided(pool: PgPool) {
     let state = common::app_with_pool(pool.clone()).1;
     let svc = ConnectionService::new(&state);
     let user = create_user(&pool, "a@example.com").await;
-    let conn = svc.create(user, &create_req("Prod", "first")).await.unwrap();
+    let conn = svc
+        .create(user, &create_req("Prod", "first"))
+        .await
+        .unwrap();
 
     let renamed: UpdateConnectionRequest =
-        serde_json::from_value(serde_json::json!({ "name": "Renamed", "read_only": false })).unwrap();
+        serde_json::from_value(serde_json::json!({ "name": "Renamed", "read_only": false }))
+            .unwrap();
     let updated = svc.update(user, conn.id, &renamed).await.unwrap();
     assert_eq!(updated.name, "Renamed");
     assert!(!updated.read_only);

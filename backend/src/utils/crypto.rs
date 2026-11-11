@@ -112,7 +112,13 @@ impl CredentialCipher {
             .ok_or(CryptoError::UnknownKey(self.primary_id))?;
         let nonce = Aes256Gcm::generate_nonce(&mut OsRng);
         let ciphertext = cipher
-            .encrypt(&nonce, Payload { msg: plaintext, aad })
+            .encrypt(
+                &nonce,
+                Payload {
+                    msg: plaintext,
+                    aad,
+                },
+            )
             .map_err(|_| CryptoError::Encryption)?;
 
         let mut out = Vec::with_capacity(HEADER_LEN + ciphertext.len());
@@ -229,7 +235,10 @@ mod tests {
     #[test]
     fn malformed_inputs_are_rejected() {
         let cipher = CredentialCipher::new(&key(1, 7), &[]);
-        assert_eq!(cipher.decrypt(&[1, 1, 0], b"").unwrap_err(), CryptoError::Malformed);
+        assert_eq!(
+            cipher.decrypt(&[1, 1, 0], b"").unwrap_err(),
+            CryptoError::Malformed
+        );
         let mut blob = cipher.encrypt(b"x", b"").unwrap();
         blob[0] = 9;
         assert_eq!(
@@ -238,7 +247,10 @@ mod tests {
         );
         blob[0] = 1;
         blob[1] = 42;
-        assert_eq!(cipher.decrypt(&blob, b"").unwrap_err(), CryptoError::UnknownKey(42));
+        assert_eq!(
+            cipher.decrypt(&blob, b"").unwrap_err(),
+            CryptoError::UnknownKey(42)
+        );
     }
 
     #[test]

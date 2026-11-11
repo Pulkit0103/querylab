@@ -32,6 +32,59 @@ pub fn app_with_pool(pool: PgPool) -> (Router, AppState) {
     (build_router(state.clone()), state)
 }
 
+/// App backed by a test database with a custom config tweak.
+pub fn app_with_config(pool: PgPool, tweak: impl FnOnce(&mut Config)) -> (Router, AppState) {
+    let mut config = Config::for_tests("postgres://unused");
+    tweak(&mut config);
+    let state = AppState::new(config, pool);
+    (build_router(state.clone()), state)
+}
+
+/// Builds a JSON API request with the CSRF header and optional bearer token.
+pub fn api(
+    method: &str,
+    uri: &str,
+    body: Option<serde_json::Value>,
+    token: Option<&str>,
+) -> Request<Body> {
+    let mut builder = Request::builder()
+        .method(method)
+        .uri(uri)
+        .header("x-querylab-csrf", "1");
+    if let Some(token) = token {
+        builder = builder.header("authorization", format!("Bearer {token}"));
+    }
+    match body {
+        Some(json) => builder
+            .header("content-type", "application/json")
+            .body(Body::from(json.to_string()))
+            .unwrap(),
+        None => builder.body(Body::empty()).unwrap(),
+    }
+}
+
+/// Registers a user and returns its session token (from the Set-Cookie header).
+pub async fn register(app: &Router, email: &str) -> String {
+    let (status, headers, body) = send_full(
+        app,
+        api(
+            "POST",
+            "/api/auth/register",
+            Some(serde_json::json!({ "email": email, "password": "correct horse battery" })),
+            None,
+        ),
+    )
+    .await;
+    assert_eq!(status, 201, "register failed: {body}");
+    session_token(&headers).expect("session cookie")
+}
+
+pub fn session_token(headers: &axum::http::HeaderMap) -> Option<String> {
+    let cookie = headers.get("set-cookie")?.to_str().ok()?;
+    let (_, rest) = cookie.split_once('=')?;
+    Some(rest.split(';').next()?.to_string())
+}
+
 pub async fn send(app: &Router, req: Request<Body>) -> (axum::http::StatusCode, serde_json::Value) {
     let (status, _, json) = send_full(app, req).await;
     (status, json)
@@ -40,7 +93,11 @@ pub async fn send(app: &Router, req: Request<Body>) -> (axum::http::StatusCode, 
 pub async fn send_full(
     app: &Router,
     req: Request<Body>,
-) -> (axum::http::StatusCode, axum::http::HeaderMap, serde_json::Value) {
+) -> (
+    axum::http::StatusCode,
+    axum::http::HeaderMap,
+    serde_json::Value,
+) {
     use tower::ServiceExt;
     let res = app.clone().oneshot(req).await.unwrap();
     let status = res.status();

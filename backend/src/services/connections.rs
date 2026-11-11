@@ -51,7 +51,9 @@ impl<'a> ConnectionService<'a> {
     }
 
     pub async fn get(&self, user_id: Uuid, id: Uuid) -> AppResult<ConnectionResponse> {
-        Ok(ConnectionResponse::from(&self.get_record(user_id, id).await?))
+        Ok(ConnectionResponse::from(
+            &self.get_record(user_id, id).await?,
+        ))
     }
 
     fn encrypt_secret(&self, user_id: Uuid, id: Uuid, password: &str) -> AppResult<Vec<u8>> {
@@ -59,7 +61,8 @@ impl<'a> ConnectionService<'a> {
             password: password.to_string(),
         };
         let plaintext = Zeroizing::new(
-            serde_json::to_vec(&secret).map_err(|e| AppError::internal(format!("serialise secret: {e}")))?,
+            serde_json::to_vec(&secret)
+                .map_err(|e| AppError::internal(format!("serialise secret: {e}")))?,
         );
         self.cipher
             .encrypt(&plaintext, &credentials_aad(user_id, id))
@@ -74,7 +77,9 @@ impl<'a> ConnectionService<'a> {
                 &record.encrypted_credentials,
                 &credentials_aad(record.user_id, record.id),
             )
-            .map_err(|e| AppError::internal(format!("decrypt credentials for {}: {e}", record.id)))?;
+            .map_err(|e| {
+                AppError::internal(format!("decrypt credentials for {}: {e}", record.id))
+            })?;
         serde_json::from_slice(&plaintext)
             .map_err(|e| AppError::internal(format!("parse credentials for {}: {e}", record.id)))
     }
@@ -166,7 +171,9 @@ impl<'a> ConnectionService<'a> {
 
 fn conflict_as_name_taken(err: sqlx::Error) -> AppError {
     match AppError::from(err) {
-        AppError::Conflict(_) => AppError::Conflict("a connection with this name already exists".into()),
+        AppError::Conflict(_) => {
+            AppError::Conflict("a connection with this name already exists".into())
+        }
         other => other,
     }
 }

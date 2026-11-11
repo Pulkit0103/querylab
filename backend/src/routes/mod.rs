@@ -3,7 +3,7 @@
 use axum::{
     extract::DefaultBodyLimit,
     http::{header, HeaderName, HeaderValue, Method},
-    routing::get,
+    routing::{get, post},
     Router,
 };
 use tower_http::{
@@ -13,7 +13,7 @@ use tower_http::{
     trace::TraceLayer,
 };
 
-use crate::{handlers, state::AppState};
+use crate::{handlers, middleware::csrf, state::AppState};
 
 const REQUEST_ID: HeaderName = HeaderName::from_static("x-request-id");
 
@@ -21,15 +21,35 @@ const REQUEST_ID: HeaderName = HeaderName::from_static("x-request-id");
 const MAX_BODY_BYTES: usize = 2 * 1024 * 1024;
 
 pub fn build_router(state: AppState) -> Router {
+    use handlers::{auth, connections};
+
     let api = Router::new()
         .route("/health", get(handlers::health::health))
-        .route("/version", get(handlers::version::version));
+        .route("/version", get(handlers::version::version))
+        // Authentication
+        .route("/auth/register", post(auth::register))
+        .route("/auth/login", post(auth::login))
+        .route("/auth/logout", post(auth::logout))
+        .route("/auth/me", get(auth::me))
+        // Database connections (all require an authenticated user)
+        .route(
+            "/connections",
+            get(connections::list).post(connections::create),
+        )
+        .route(
+            "/connections/{id}",
+            get(connections::get)
+                .put(connections::update)
+                .delete(connections::delete),
+        );
 
     Router::new()
         .route("/health", get(handlers::health::health))
         .nest("/api", api)
         .fallback(handlers::not_found)
         .layer(DefaultBodyLimit::max(MAX_BODY_BYTES))
+        // Runs inside CORS so preflight requests are answered first.
+        .layer(axum::middleware::from_fn(csrf::require_csrf_header))
         .layer(TimeoutLayer::with_status_code(
             axum::http::StatusCode::REQUEST_TIMEOUT,
             state.config.request_timeout,
@@ -71,6 +91,10 @@ fn cors_layer(origins: &[String]) -> CorsLayer {
             Method::DELETE,
             Method::OPTIONS,
         ])
-        .allow_headers([header::CONTENT_TYPE, header::AUTHORIZATION])
+        .allow_headers([
+            header::CONTENT_TYPE,
+            header::AUTHORIZATION,
+            HeaderName::from_static(csrf::CSRF_HEADER),
+        ])
         .allow_credentials(true)
 }

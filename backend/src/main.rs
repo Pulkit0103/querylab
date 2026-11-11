@@ -26,6 +26,8 @@ async fn run() -> Result<(), Box<dyn std::error::Error>> {
         tracing::warn!("metadata database is not reachable yet; continuing in degraded mode");
     }
 
+    querylab_api::services::auth::spawn_session_cleanup(pool.clone());
+
     let addr = config.bind_addr;
     let app = build_router(AppState::new(config, pool));
 

@@ -195,7 +195,8 @@ fn validate_fields(
     password: Option<&str>,
 ) {
     if let Some(name) = name {
-        v.length("name", name.trim(), 1, 100).no_control_chars("name", name);
+        v.length("name", name.trim(), 1, 100)
+            .no_control_chars("name", name);
     }
     if let Some(host) = host {
         v.check(
@@ -216,8 +217,16 @@ fn validate_fields(
             .no_control_chars("username", username);
     }
     if let Some(password) = password {
-        v.check(password.len() <= 1024, "password", "must be at most 1024 bytes")
-            .check(!password.contains('\0'), "password", "must not contain NUL bytes");
+        v.check(
+            password.len() <= 1024,
+            "password",
+            "must be at most 1024 bytes",
+        )
+        .check(
+            !password.contains('\0'),
+            "password",
+            "must not contain NUL bytes",
+        );
     }
 }
 
