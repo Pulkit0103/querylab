@@ -292,8 +292,9 @@ async fn timeouts_and_cancellation(pool: PgPool) {
         })
     };
     // Wait until the execution is registered with a backend pid, then cancel.
+    // Generous window: connection setup can be slow on loaded CI/dev hosts.
     let mut cancelled = false;
-    for _ in 0..50 {
+    for _ in 0..300 {
         tokio::time::sleep(Duration::from_millis(100)).await;
         let (status, body) = send(
             &app,

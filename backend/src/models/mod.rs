@@ -2,6 +2,7 @@
 
 pub mod auth;
 pub mod connection;
+pub mod library;
 pub mod query;
 pub mod schema;
 pub mod user;

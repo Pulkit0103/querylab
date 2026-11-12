@@ -4,7 +4,7 @@ use uuid::Uuid;
 use crate::{
     errors::AppResult,
     models::query::{CancelResponse, ExecuteRequest, ExplainRequest, ExplainResult, QueryResult},
-    services::{auth::AuthUser, execution},
+    services::{auth::AuthUser, execution, library::LibraryService},
     state::AppState,
     utils::validation::{ApiPath, ValidatedJson},
 };
@@ -14,7 +14,13 @@ pub async fn execute(
     user: AuthUser,
     ValidatedJson(req): ValidatedJson<ExecuteRequest>,
 ) -> AppResult<Json<QueryResult>> {
-    Ok(Json(execution::execute(&state, &user, &req).await?))
+    let outcome = execution::execute(&state, &user, &req).await;
+    let history_id = LibraryService::new(&state)
+        .record_execution(user.user_id, req.connection_id, &req.query, &outcome)
+        .await;
+    let mut result = outcome?;
+    result.history_id = history_id;
+    Ok(Json(result))
 }
 
 pub async fn explain(

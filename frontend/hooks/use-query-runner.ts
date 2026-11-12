@@ -96,6 +96,7 @@ export function useQueryRunner() {
         finish(tabId, entry);
         // Execution may be recorded in history.
         void qc.invalidateQueries({ queryKey: ["history"] });
+        void qc.invalidateQueries({ queryKey: ["stats"] });
       }
     },
     [qc, store, maxRows],

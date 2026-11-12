@@ -231,6 +231,7 @@ of SQL text. Use a role with only `SELECT` grants for defence in depth.
 | `ENCRYPTION_KEY_ID`        | `1`                      | Id stamped on new ciphertexts |
 | `ENCRYPTION_PREVIOUS_KEYS` | —                        | `id:base64,...` keys accepted for decryption |
 | `RUN_MIGRATIONS`           | `true`                   | Apply migrations on startup |
+| `DATABASE_MAX_CONNECTIONS` / `DATABASE_MIN_CONNECTIONS` | `10` / `2` | Metadata pool size (min kept warm) |
 | `APP_ENV`                  | `development`            | `production` enables JSON logs and strict checks |
 | `HOST` / `PORT`            | `0.0.0.0` / `8080`       | Bind address |
 | `CORS_ORIGINS`             | `http://localhost:3000`  | Comma-separated origins for direct API access |
@@ -278,6 +279,24 @@ of SQL text. Use a role with only `SELECT` grants for defence in depth.
 | POST   | `/api/query/execute`      | Execute one SQL statement                |
 | POST   | `/api/query/explain`      | EXPLAIN / EXPLAIN ANALYZE (JSON plan)    |
 | POST   | `/api/query/{execution_id}/cancel` | Cancel a running execution      |
+| GET    | `/api/history?limit=&before=&status=&connection_id=&q=` | Execution history (keyset paginated) |
+| GET    | `/api/history/{id}`       | One history entry                        |
+| DELETE | `/api/history/{id}`       | Delete one entry                         |
+| DELETE | `/api/history`            | Clear history                            |
+| GET    | `/api/queries?q=&collection_id=` | List/search saved queries         |
+| POST   | `/api/queries`            | Save a query                             |
+| GET    | `/api/queries/{id}`       | Get a saved query                        |
+| PUT    | `/api/queries/{id}`       | Update (explicit `null` clears a link)   |
+| DELETE | `/api/queries/{id}`       | Delete a saved query                     |
+| GET/POST | `/api/collections`      | List/create collections (folders)        |
+| PUT/DELETE | `/api/collections/{id}` | Rename/delete (queries are kept)       |
+| GET    | `/api/stats?days=`        | Dashboard statistics                     |
+
+Every execution is recorded in history with status (`success`, `error`,
+`timeout`, `cancelled`), duration, row count and error message. Saved queries
+and history reference connections and collections through composite foreign
+keys `(id, user_id)`, so a user can never attach another user's resources.
+Deleting a connection or collection unlinks rather than deletes queries.
 
 Schema metadata is read from `pg_catalog` with fully parameterised queries
 (exact schema/table names, no identifier quoting or string building) on a
