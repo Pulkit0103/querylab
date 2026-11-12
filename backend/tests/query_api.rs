@@ -377,6 +377,28 @@ async fn explain_and_explain_analyze(pool: PgPool) {
     assert_eq!(res["analyzed"], true);
     assert!(res["execution_time_ms"].as_f64().unwrap() >= 0.0);
     assert!(res["plan"]["Actual Rows"].is_number());
+    // Fields the plan visualization depends on.
+    assert!(res["planning_time_ms"].is_number());
+    assert!(res["plan"]["Actual Loops"].is_number());
+    assert!(
+        res["plan"]["Shared Hit Blocks"].is_number(),
+        "BUFFERS requested"
+    );
+    assert!(res["plan"]["Plans"][0]["Node Type"].is_string());
+
+    // A data-modifying CTE hidden behind a SELECT is blocked as well.
+    let (status, res) = send(
+        &app,
+        api(
+            "POST",
+            "/api/query/explain",
+            Some(json!({ "connection_id": id, "query": "WITH gone AS (DELETE FROM public.departments RETURNING id) SELECT count(*) FROM gone", "analyze": true, "confirm_analyze": true })),
+            Some(&token),
+        ),
+    )
+    .await;
+    assert_eq!(status, 400, "{res}");
+    assert_eq!(res["error"]["details"]["sqlstate"], "25006");
 
     // Even on a read-write connection, ANALYZE of a write is blocked.
     let (status, res) = send(
