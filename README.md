@@ -143,6 +143,34 @@ The frontend's `proxy.ts` redirects visitors without a session cookie to
 `/login`; the API remains the authority and a `401` anywhere sends the user
 back to sign in.
 
+## Connecting to user databases
+
+Each operation against a user's database opens a **dedicated, short-lived
+connection**. User SQL never runs on QueryLab's metadata pool.
+
+- Options are built with `PgConnectOptions::new_without_pgpass()`, so the
+  server's `PG*` environment variables and `.pgpass` never leak into a user
+  connection.
+- Statement logging is disabled for target connections, so user SQL and values
+  never reach the logs.
+- Read-only connections set `default_transaction_read_only=on` at startup.
+  Use a role that only has `SELECT` grants for defence in depth (see
+  `scripts/sample-db` for an example role).
+- **SSRF protection**:
+  - On save, loopback, private, link-local, CGNAT, ULA and metadata
+    addresses, internal hostnames (`localhost`, `*.internal`, `*.local`, …)
+    and ports below 1024 are rejected.
+  - Right before connecting, the hostname is resolved and *every* address
+    must be public.
+  - `ALLOW_PRIVATE_NETWORKS=true` lifts the address rule for local
+    development only.
+  - DNS can change between the check and the connect, so production should
+    also restrict egress at the network layer.
+- Connection tests (`POST /api/connections/test` for unsaved drafts,
+  `POST /api/connections/{id}/test` for saved ones) report the server
+  version, role and read-only status. They warn when the role is a
+  superuser, read-write mode is on, or TLS is not required.
+
 ## Configuration (backend)
 
 | Variable                   | Default                  | Description |
@@ -162,6 +190,9 @@ back to sign in.
 | `COOKIE_SECURE`            | `true` in production     | `Secure` + `__Host-` session cookie |
 | `TRUSTED_PROXY_HOPS`       | `0`                      | Reverse proxies whose `X-Forwarded-For` entry is trusted |
 | `AUTH_RATE_LIMIT_PER_MINUTE` | `10`                   | Login/registration attempts per IP and per account |
+| `ALLOW_PRIVATE_NETWORKS`   | `false`                  | Allow target DBs on private/loopback networks (dev only) |
+| `TARGET_CONNECT_TIMEOUT_SECS` | `10`                  | Connect timeout for target databases |
+| `TARGET_CONNECT_RATE_LIMIT_PER_MINUTE` | `60`         | Target connections per user per minute |
 
 ## API
 
@@ -179,6 +210,8 @@ back to sign in.
 | GET    | `/api/connections/{id}`   | Get a connection                         |
 | PUT    | `/api/connections/{id}`   | Update; omit `password` to keep it       |
 | DELETE | `/api/connections/{id}`   | Delete a connection                      |
+| POST   | `/api/connections/test`   | Test an unsaved connection               |
+| POST   | `/api/connections/{id}/test` | Test a saved connection               |
 
 All endpoints except health, version, register and login require a session.
 

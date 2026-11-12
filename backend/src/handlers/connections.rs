@@ -4,9 +4,16 @@ use uuid::Uuid;
 use crate::{
     errors::AppResult,
     models::connection::{ConnectionResponse, CreateConnectionRequest, UpdateConnectionRequest},
-    services::{auth::AuthUser, connections::ConnectionService},
+    services::{
+        auth::AuthUser,
+        connections::ConnectionService,
+        target_db::{self, ConnectionTestResult, TargetSpec},
+    },
     state::AppState,
-    utils::validation::{ApiPath, ValidatedJson},
+    utils::{
+        network,
+        validation::{ApiPath, ValidatedJson},
+    },
 };
 
 pub async fn list(
@@ -50,6 +57,39 @@ pub async fn update(
             .update(user.user_id, id, &req)
             .await?,
     ))
+}
+
+/// Tests an unsaved connection (used by the "Test connection" button before saving).
+pub async fn test_draft(
+    State(state): State<AppState>,
+    user: AuthUser,
+    ValidatedJson(req): ValidatedJson<CreateConnectionRequest>,
+) -> AppResult<Json<ConnectionTestResult>> {
+    state.connect_limiter.check(&user.user_id.to_string())?;
+    network::precheck(
+        req.host.trim(),
+        req.port,
+        state.config.allow_private_networks,
+    )?;
+    let result = target_db::test_connection(&state.config, &TargetSpec::from_request(&req)).await?;
+    Ok(Json(result))
+}
+
+/// Tests a saved connection using its stored (encrypted) credentials.
+pub async fn test_saved(
+    State(state): State<AppState>,
+    user: AuthUser,
+    ApiPath(id): ApiPath<Uuid>,
+) -> AppResult<Json<ConnectionTestResult>> {
+    state.connect_limiter.check(&user.user_id.to_string())?;
+    let service = ConnectionService::new(&state);
+    let record = service.get_record(user.user_id, id).await?;
+    let secret = service.decrypt_secret(&record)?;
+    let result =
+        target_db::test_connection(&state.config, &TargetSpec::from_record(&record, &secret))
+            .await?;
+    service.mark_connected(user.user_id, id).await?;
+    Ok(Json(result))
 }
 
 pub async fn delete(

@@ -3,7 +3,14 @@
 import { create } from "zustand";
 import { createJSONStorage, persist } from "zustand/middleware";
 
+import type { Connection } from "@/types/api";
+
 interface WorkspaceState {
+  /** Add/edit connection dialog; `editing` is null when adding. */
+  connectionDialog: { open: boolean; editing: Connection | null };
+  openConnectionDialog: (editing?: Connection | null) => void;
+  closeConnectionDialog: () => void;
+
   /** Connection used by the editor and explorer. */
   activeConnectionId: string | null;
   sidebarCollapsed: boolean;
@@ -24,6 +31,9 @@ interface WorkspaceState {
 export const useWorkspaceStore = create<WorkspaceState>()(
   persist(
     (set) => ({
+      connectionDialog: { open: false, editing: null },
+      openConnectionDialog: (editing = null) => set({ connectionDialog: { open: true, editing } }),
+      closeConnectionDialog: () => set((s) => ({ connectionDialog: { ...s.connectionDialog, open: false } })),
       activeConnectionId: null,
       sidebarCollapsed: false,
       mobileNavOpen: false,

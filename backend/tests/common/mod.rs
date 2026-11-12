@@ -40,6 +40,26 @@ pub fn app_with_config(pool: PgPool, tweak: impl FnOnce(&mut Config)) -> (Router
     (build_router(state.clone()), state)
 }
 
+/// Connection payload for the seeded sample database (see
+/// `scripts/sample-db`). Override with SAMPLE_PG_HOST / SAMPLE_PG_PORT.
+pub fn sample_connection(name: &str) -> serde_json::Value {
+    let host = std::env::var("SAMPLE_PG_HOST").unwrap_or_else(|_| "127.0.0.1".into());
+    let port: u16 = std::env::var("SAMPLE_PG_PORT")
+        .ok()
+        .and_then(|p| p.parse().ok())
+        .unwrap_or(5432);
+    serde_json::json!({
+        "name": name,
+        "host": host,
+        "port": port,
+        "database": "sampledb",
+        "username": "querylab_reader",
+        "password": "reader_password",
+        "ssl_mode": "disable",
+        "read_only": true,
+    })
+}
+
 /// Builds a JSON API request with the CSRF header and optional bearer token.
 pub fn api(
     method: &str,

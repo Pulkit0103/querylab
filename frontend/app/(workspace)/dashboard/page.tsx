@@ -4,6 +4,7 @@ import Link from "next/link";
 import { ArrowRight, Bookmark, Database, History, SquareTerminal } from "lucide-react";
 
 import { PageContainer } from "@/components/common/page-container";
+import { ConnectionList } from "@/components/connections/connection-list";
 
 const quickLinks = [
   { href: "/editor", icon: SquareTerminal, title: "Open SQL editor", description: "Write and run queries with autocomplete." },
@@ -31,6 +32,13 @@ export default function DashboardPage() {
           </Link>
         ))}
       </div>
+
+      <section className="mt-6 rounded-lg border bg-card">
+        <div className="border-b px-4 py-3">
+          <h3 className="text-sm font-medium">Connections</h3>
+        </div>
+        <ConnectionList />
+      </section>
     </PageContainer>
   );
 }

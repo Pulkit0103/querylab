@@ -12,12 +12,13 @@ use crate::{
         UpdateConnectionRequest,
     },
     state::AppState,
-    utils::crypto::CredentialCipher,
+    utils::{crypto::CredentialCipher, network},
 };
 
 pub struct ConnectionService<'a> {
     db: &'a PgPool,
     cipher: &'a CredentialCipher,
+    allow_private_networks: bool,
 }
 
 /// Associated data binding a ciphertext to its owner and row.
@@ -30,11 +31,8 @@ impl<'a> ConnectionService<'a> {
         Self {
             db: &state.db,
             cipher: &state.cipher,
+            allow_private_networks: state.config.allow_private_networks,
         }
-    }
-
-    pub fn from_parts(db: &'a PgPool, cipher: &'a CredentialCipher) -> Self {
-        Self { db, cipher }
     }
 
     pub async fn list(&self, user_id: Uuid) -> AppResult<Vec<ConnectionResponse>> {
@@ -89,6 +87,7 @@ impl<'a> ConnectionService<'a> {
         user_id: Uuid,
         req: &CreateConnectionRequest,
     ) -> AppResult<ConnectionResponse> {
+        network::precheck(req.host.trim(), req.port, self.allow_private_networks)?;
         let id = Uuid::new_v4();
         let encrypted = self.encrypt_secret(user_id, id, &req.password)?;
         let record = repo::insert(
@@ -130,6 +129,11 @@ impl<'a> ConnectionService<'a> {
         };
         let name = req.name.as_deref().map(str::trim).unwrap_or(&existing.name);
         let host = req.host.as_deref().map(str::trim).unwrap_or(&existing.host);
+        network::precheck(
+            host,
+            req.port.unwrap_or(existing.port()),
+            self.allow_private_networks,
+        )?;
         let record = repo::update(
             self.db,
             &NewConnection {

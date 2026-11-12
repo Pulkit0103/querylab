@@ -48,6 +48,11 @@ zeroize = { version = "1", features = ["serde", "zeroize_derive"] }
 [dev-dependencies]
 http-body-util = "0.1"
 
+# Optimise dependencies in dev builds: crypto (SCRAM, Argon2, AES-GCM) is
+# otherwise orders of magnitude slower without optimisation.
+[profile.dev.package."*"]
+opt-level = 2
+
 [profile.release]
 lto = "thin"
 codegen-units = 1

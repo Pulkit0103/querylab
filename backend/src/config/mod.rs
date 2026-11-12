@@ -65,6 +65,12 @@ pub struct Config {
     pub trusted_proxy_hops: usize,
     /// Login/registration attempts allowed per minute per IP and per account.
     pub auth_rate_limit_per_minute: u32,
+    /// Permit target databases on private/loopback networks (development only).
+    pub allow_private_networks: bool,
+    /// Timeout for establishing a connection to a target database.
+    pub target_connect_timeout: Duration,
+    /// Connection tests and schema/query connections allowed per user per minute.
+    pub target_connect_rate_limit_per_minute: u32,
 }
 
 impl Config {
@@ -103,6 +109,12 @@ impl Config {
 
         let (encryption_key, previous_encryption_keys) = load_encryption_keys(&environment)?;
         let cookie_secure = parse_or("COOKIE_SECURE", environment.is_production())?;
+        let allow_private_networks: bool = parse_or("ALLOW_PRIVATE_NETWORKS", false)?;
+        if allow_private_networks && environment.is_production() {
+            eprintln!(
+                "warning: ALLOW_PRIVATE_NETWORKS=true in production lets users reach internal network addresses"
+            );
+        }
 
         Ok(Self {
             environment,
@@ -122,6 +134,15 @@ impl Config {
             cookie_secure,
             trusted_proxy_hops: parse_or("TRUSTED_PROXY_HOPS", 0)?,
             auth_rate_limit_per_minute: parse_or("AUTH_RATE_LIMIT_PER_MINUTE", 10)?,
+            allow_private_networks,
+            target_connect_timeout: Duration::from_secs(parse_or(
+                "TARGET_CONNECT_TIMEOUT_SECS",
+                10,
+            )?),
+            target_connect_rate_limit_per_minute: parse_or(
+                "TARGET_CONNECT_RATE_LIMIT_PER_MINUTE",
+                60,
+            )?,
         })
     }
 
@@ -136,7 +157,8 @@ impl Config {
             run_migrations: true,
             cors_origins: vec!["http://localhost:3000".into()],
             log_format: LogFormat::Pretty,
-            request_timeout: Duration::from_secs(30),
+            // Generous: per-test databases can be slow to provision under load.
+            request_timeout: Duration::from_secs(120),
             encryption_key: EncryptionKey::from_base64(1, DEV_ENCRYPTION_KEY)
                 .expect("dev key is valid"),
             previous_encryption_keys: Vec::new(),
@@ -145,6 +167,10 @@ impl Config {
             cookie_secure: false,
             trusted_proxy_hops: 0,
             auth_rate_limit_per_minute: 1000,
+            // Tests connect to a local PostgreSQL; SSRF tests opt back in.
+            allow_private_networks: true,
+            target_connect_timeout: Duration::from_secs(10),
+            target_connect_rate_limit_per_minute: 1000,
         }
     }
 }

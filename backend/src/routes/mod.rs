@@ -36,12 +36,14 @@ pub fn build_router(state: AppState) -> Router {
             "/connections",
             get(connections::list).post(connections::create),
         )
+        .route("/connections/test", post(connections::test_draft))
         .route(
             "/connections/{id}",
             get(connections::get)
                 .put(connections::update)
                 .delete(connections::delete),
-        );
+        )
+        .route("/connections/{id}/test", post(connections::test_saved));
 
     Router::new()
         .route("/health", get(handlers::health::health))
