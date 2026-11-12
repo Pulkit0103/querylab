@@ -4,6 +4,7 @@
 pub mod auth;
 pub mod connections;
 pub mod health;
+pub mod schema;
 pub mod version;
 
 use crate::errors::AppError;
