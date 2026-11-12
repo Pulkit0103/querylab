@@ -1,0 +1,90 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  backend:
+    name: Backend (Rust)
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: backend
+    services:
+      postgres:
+        image: postgres:17
+        env:
+          POSTGRES_PASSWORD: postgres
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U postgres"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+    env:
+      CARGO_TERM_COLOR: always
+      DATABASE_URL: postgres://querylab:querylab@localhost:5432/querylab
+      PGHOST: localhost
+      PGUSER: postgres
+      PGPASSWORD: postgres
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Prepare databases
+        working-directory: .
+        run: |
+          psql -v ON_ERROR_STOP=1 -c "CREATE ROLE querylab LOGIN PASSWORD 'querylab' CREATEDB"
+          psql -v ON_ERROR_STOP=1 -c "CREATE DATABASE querylab OWNER querylab"
+          psql -v ON_ERROR_STOP=1 -c "CREATE ROLE sample_owner LOGIN PASSWORD 'sample_owner' CREATEROLE"
+          psql -v ON_ERROR_STOP=1 -c "CREATE DATABASE sampledb OWNER sample_owner"
+          PGUSER=sample_owner PGPASSWORD=sample_owner psql -v ON_ERROR_STOP=1 -q -d sampledb -f scripts/sample-db/01-schema.sql
+
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: clippy, rustfmt
+
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: backend
+
+      - name: Format
+        run: cargo fmt --check
+
+      - name: Clippy
+        run: cargo clippy --all-targets -- -D warnings
+
+      - name: Test (including database-backed tests)
+        run: cargo test -- --include-ignored
+
+  frontend:
+    name: Frontend (Next.js)
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: frontend
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: frontend/package-lock.json
+
+      - run: npm ci
+      - run: npm run lint
+      - run: npx tsc --noEmit
+      - run: npm test
+      - run: npm run build
+        env:
+          BACKEND_URL: http://127.0.0.1:8080
