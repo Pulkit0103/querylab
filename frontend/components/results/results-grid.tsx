@@ -17,31 +17,18 @@ import { toast } from "sonner";
 
 import { Button } from "@/components/ui/button";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
+import { compareCells, NUMERIC_TYPES } from "@/lib/compare-cells";
 import { downloadText, toCsv, toTsv } from "@/lib/csv";
 import { cellToText, formatNumber } from "@/lib/format";
 import { cn } from "@/lib/utils";
 import type { CellValue, ColumnMeta } from "@/types/query";
 
-const NUMERIC_TYPES = new Set(["int2", "int4", "int8", "float4", "float8", "numeric", "oid", "money"]);
 const PAGE_SIZES = [50, 100, 250, 500];
 
 type SortState = { col: number; dir: "asc" | "desc" } | null;
 interface CellPos {
   r: number;
   c: number;
-}
-
-export function compareCells(a: CellValue, b: CellValue, numeric: boolean): number {
-  if (a === null && b === null) return 0;
-  if (a === null) return 1;
-  if (b === null) return -1;
-  if (numeric || (typeof a === "number" && typeof b === "number")) {
-    const na = Number(a);
-    const nb = Number(b);
-    if (!Number.isNaN(na) && !Number.isNaN(nb)) return na - nb;
-  }
-  if (typeof a === "boolean" && typeof b === "boolean") return Number(a) - Number(b);
-  return cellToText(a).localeCompare(cellToText(b), undefined, { numeric: true, sensitivity: "base" });
 }
 
 function Cell({ value, numeric }: { value: CellValue; numeric: boolean }) {

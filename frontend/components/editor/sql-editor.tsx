@@ -6,6 +6,8 @@ import { useTheme } from "next-themes";
 
 import { Skeleton } from "@/components/ui/skeleton";
 
+import { registerSqlCompletion } from "./sql-completion";
+
 export type MonacoEditor = Parameters<OnMount>[0];
 export type MonacoApi = Parameters<OnMount>[1];
 
@@ -114,6 +116,7 @@ export function SqlEditor({ path, value, onChange, onRun, onSave, onFormat, onMo
       run: () => handlers.current.onFormat(),
     });
 
+    registerSqlCompletion(monaco);
     editor.focus();
     onMount?.({ editor, monaco });
   };
