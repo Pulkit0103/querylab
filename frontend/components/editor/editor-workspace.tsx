@@ -3,9 +3,11 @@
 import { useCallback, useState } from "react";
 import { toast } from "sonner";
 
+import { NoConnection } from "@/components/explorer/no-connection";
 import { SchemaTree } from "@/components/explorer/schema-tree";
 import { ResultsPanel } from "@/components/results/results-panel";
 import { ResizableHandle, ResizablePanel, ResizablePanelGroup } from "@/components/ui/resizable";
+import { useActiveConnection } from "@/hooks/use-connections";
 import { useMediaQuery } from "@/hooks/use-media-query";
 import { useQueryRunner } from "@/hooks/use-query-runner";
 import { formatSql } from "@/lib/format";
@@ -26,6 +28,7 @@ export function EditorWorkspace() {
   const [handle, setHandle] = useState<SqlEditorHandle | null>(null);
   const { run, cancel } = useQueryRunner();
   const isDesktop = useMediaQuery("(min-width: 768px)");
+  const { connection, isPending: connectionsPending } = useActiveConnection();
 
   const runSql = useCallback((sql: string) => void run(activeTab.id, sql), [run, activeTab.id]);
 
@@ -124,14 +127,18 @@ export function EditorWorkspace() {
   return (
     <ResizablePanelGroup orientation="horizontal" className="h-full">
       <ResizablePanel defaultSize="20%" minSize="180px" maxSize="40%" collapsible collapsedSize="0%" className="bg-panel">
-        <SchemaTree
-          connectionId="demo"
-          databaseName="Demo database"
-          onPreviewTable={(schema, table) => {
-            const id = newTab({ title: table, sql: previewSql(schema, table) });
-            void run(id, previewSql(schema, table));
-          }}
-        />
+        {connection ? (
+          <SchemaTree
+            connectionId={connection.id}
+            databaseName={connection.database}
+            onPreviewTable={(schema, table) => {
+              const id = newTab({ title: table, sql: previewSql(schema, table) });
+              void run(id, previewSql(schema, table));
+            }}
+          />
+        ) : (
+          !connectionsPending && <NoConnection compact />
+        )}
       </ResizablePanel>
       <ResizableHandle />
       <ResizablePanel defaultSize="80%" minSize="40%">

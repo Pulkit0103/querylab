@@ -16,9 +16,11 @@ use sqlx::{
     ConnectOptions, Connection, PgConnection, Row,
 };
 
+use sqlx::postgres::{PgDatabaseError, PgErrorPosition};
+
 use crate::{
     config::Config,
-    errors::{AppError, AppResult},
+    errors::{AppError, AppResult, SqlErrorInfo},
     models::connection::{ConnectionRecord, ConnectionSecret, CreateConnectionRequest, SslMode},
     utils::network,
 };
@@ -131,6 +133,66 @@ pub fn map_connect_error(err: sqlx::Error, host: &str, port: u16) -> AppError {
             AppError::TargetUnavailable(format!("could not connect to {host}:{port}"))
         }
     }
+}
+
+/// Maps errors raised while running SQL on a target database. Server errors
+/// become structured [`AppError::Sql`] values (message, SQLSTATE, position,
+/// detail, hint); transport failures become connection errors.
+pub fn query_error(err: sqlx::Error) -> AppError {
+    match err {
+        sqlx::Error::Database(db) => {
+            let mut info = SqlErrorInfo {
+                message: db.message().to_string(),
+                sqlstate: db.code().map(|c| c.into_owned()),
+                ..Default::default()
+            };
+            if let Some(pg) = db.try_downcast_ref::<PgDatabaseError>() {
+                info.detail = pg.detail().map(str::to_string);
+                info.hint = pg.hint().map(str::to_string);
+                info.position = match pg.position() {
+                    Some(PgErrorPosition::Original(p)) => u32::try_from(p).ok(),
+                    _ => None,
+                };
+            }
+            AppError::Sql(info)
+        }
+        sqlx::Error::Io(_) | sqlx::Error::Tls(_) | sqlx::Error::Protocol(_) => {
+            AppError::TargetUnavailable("the connection to the database was lost".into())
+        }
+        sqlx::Error::ColumnDecode { index, .. } => {
+            AppError::internal(format!("could not decode result column {index}"))
+        }
+        other => AppError::internal(format!("target query failed: {other}")),
+    }
+}
+
+fn timeout_ms(timeout: Duration) -> String {
+    timeout.as_millis().clamp(1, i32::MAX as u128).to_string()
+}
+
+/// Session-level statement timeout (used outside explicit transactions).
+pub async fn set_statement_timeout(conn: &mut PgConnection, timeout: Duration) -> AppResult<()> {
+    sqlx::query("SELECT set_config('statement_timeout', $1, false)")
+        .bind(timeout_ms(timeout))
+        .execute(conn)
+        .await
+        .map_err(query_error)?;
+    Ok(())
+}
+
+/// Transaction-local timeouts. Values are bound as parameters, never formatted
+/// into SQL.
+pub async fn set_local_timeouts(conn: &mut PgConnection, timeout: Duration) -> AppResult<()> {
+    sqlx::query(
+        "SELECT set_config('statement_timeout', $1, true), \
+                set_config('idle_in_transaction_session_timeout', $2, true)",
+    )
+    .bind(timeout_ms(timeout))
+    .bind(timeout_ms(timeout + Duration::from_secs(30)))
+    .execute(conn)
+    .await
+    .map_err(query_error)?;
+    Ok(())
 }
 
 #[derive(Debug, Serialize)]

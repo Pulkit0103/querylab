@@ -212,6 +212,16 @@ connection**. User SQL never runs on QueryLab's metadata pool.
 | DELETE | `/api/connections/{id}`   | Delete a connection                      |
 | POST   | `/api/connections/test`   | Test an unsaved connection               |
 | POST   | `/api/connections/{id}/test` | Test a saved connection               |
+| GET    | `/api/connections/{id}/schemas` | Schemas with table counts          |
+| GET    | `/api/connections/{id}/tables?schema=` | Tables, views, row estimates, sizes |
+| GET    | `/api/connections/{id}/tables/{table}/columns?schema=` | Columns, types, PK/FK |
+| GET    | `/api/connections/{id}/tables/{table}/indexes?schema=` | Index definitions   |
+| GET    | `/api/connections/{id}/tables/{table}/relationships?schema=` | Incoming/outgoing FKs |
+| GET    | `/api/connections/{id}/catalog` | All tables + columns (autocomplete) |
+
+Schema metadata is read from `pg_catalog` with fully parameterised queries
+(exact schema/table names, no identifier quoting or string building) on a
+read-only connection with a statement timeout. `?schema=` defaults to `public`.
 
 All endpoints except health, version, register and login require a session.
 

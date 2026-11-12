@@ -21,7 +21,7 @@ const REQUEST_ID: HeaderName = HeaderName::from_static("x-request-id");
 const MAX_BODY_BYTES: usize = 2 * 1024 * 1024;
 
 pub fn build_router(state: AppState) -> Router {
-    use handlers::{auth, connections};
+    use handlers::{auth, connections, schema};
 
     let api = Router::new()
         .route("/health", get(handlers::health::health))
@@ -43,7 +43,23 @@ pub fn build_router(state: AppState) -> Router {
                 .put(connections::update)
                 .delete(connections::delete),
         )
-        .route("/connections/{id}/test", post(connections::test_saved));
+        .route("/connections/{id}/test", post(connections::test_saved))
+        // Schema explorer
+        .route("/connections/{id}/schemas", get(schema::schemas))
+        .route("/connections/{id}/tables", get(schema::tables))
+        .route("/connections/{id}/catalog", get(schema::catalog))
+        .route(
+            "/connections/{id}/tables/{table}/columns",
+            get(schema::columns),
+        )
+        .route(
+            "/connections/{id}/tables/{table}/indexes",
+            get(schema::indexes),
+        )
+        .route(
+            "/connections/{id}/tables/{table}/relationships",
+            get(schema::relationships),
+        );
 
     Router::new()
         .route("/health", get(handlers::health::health))
