@@ -71,6 +71,16 @@ pub struct Config {
     pub target_connect_timeout: Duration,
     /// Connection tests and schema/query connections allowed per user per minute.
     pub target_connect_rate_limit_per_minute: u32,
+    /// Default and maximum statement timeouts for user queries.
+    pub query_default_timeout: Duration,
+    pub query_max_timeout: Duration,
+    /// Default and maximum rows returned per execution.
+    pub query_default_max_rows: usize,
+    pub query_max_rows: usize,
+    /// Query executions allowed per user per minute.
+    pub query_rate_limit_per_minute: u32,
+    /// Simultaneous executions allowed per user.
+    pub max_concurrent_queries_per_user: usize,
 }
 
 impl Config {
@@ -109,6 +119,14 @@ impl Config {
 
         let (encryption_key, previous_encryption_keys) = load_encryption_keys(&environment)?;
         let cookie_secure = parse_or("COOKIE_SECURE", environment.is_production())?;
+        let request_timeout = Duration::from_secs(parse_or("REQUEST_TIMEOUT_SECS", 120)?);
+        // Queries must finish (or time out) before the HTTP request does.
+        let query_max_timeout = Duration::from_secs(parse_or("QUERY_MAX_TIMEOUT_SECS", 300)?)
+            .min(request_timeout.saturating_sub(Duration::from_secs(5)))
+            .max(Duration::from_secs(1));
+        let query_default_timeout =
+            Duration::from_secs(parse_or("QUERY_TIMEOUT_SECS", 30)?).min(query_max_timeout);
+        let query_max_rows: usize = parse_or("QUERY_MAX_ROWS", 10_000)?;
         let allow_private_networks: bool = parse_or("ALLOW_PRIVATE_NETWORKS", false)?;
         if allow_private_networks && environment.is_production() {
             eprintln!(
@@ -124,7 +142,7 @@ impl Config {
             run_migrations: parse_or("RUN_MIGRATIONS", true)?,
             cors_origins,
             log_format,
-            request_timeout: Duration::from_secs(parse_or("REQUEST_TIMEOUT_SECS", 120)?),
+            request_timeout,
             encryption_key,
             previous_encryption_keys,
             session_ttl: Duration::from_secs(parse_or::<u64>("SESSION_TTL_HOURS", 168)? * 3600),
@@ -143,6 +161,13 @@ impl Config {
                 "TARGET_CONNECT_RATE_LIMIT_PER_MINUTE",
                 60,
             )?,
+            query_default_timeout,
+            query_max_timeout,
+            query_default_max_rows: parse_or::<usize>("QUERY_DEFAULT_MAX_ROWS", 1_000)?
+                .min(query_max_rows),
+            query_max_rows,
+            query_rate_limit_per_minute: parse_or("QUERY_RATE_LIMIT_PER_MINUTE", 120)?,
+            max_concurrent_queries_per_user: parse_or("MAX_CONCURRENT_QUERIES_PER_USER", 3)?,
         })
     }
 
@@ -171,6 +196,12 @@ impl Config {
             allow_private_networks: true,
             target_connect_timeout: Duration::from_secs(10),
             target_connect_rate_limit_per_minute: 1000,
+            query_default_timeout: Duration::from_secs(30),
+            query_max_timeout: Duration::from_secs(60),
+            query_default_max_rows: 1000,
+            query_max_rows: 10_000,
+            query_rate_limit_per_minute: 1000,
+            max_concurrent_queries_per_user: 5,
         }
     }
 }

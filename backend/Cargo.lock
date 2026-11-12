@@ -1269,6 +1269,7 @@ dependencies = [
  "base64",
  "chrono",
  "dotenvy",
+ "futures-util",
  "http-body-util",
  "serde",
  "serde_json",

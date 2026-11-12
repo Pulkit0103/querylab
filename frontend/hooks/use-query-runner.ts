@@ -1,53 +1,171 @@
 "use client";
 
 import { useCallback } from "react";
+import { useQueryClient } from "@tanstack/react-query";
+import { toast } from "sonner";
 
-import { mockExecute } from "@/lib/mock-data";
+import { api, ApiError } from "@/lib/api-client";
 import { formatDuration, formatNumber } from "@/lib/format";
 import { useEditorStore } from "@/stores/editor-store";
+import { useWorkspaceStore } from "@/stores/workspace-store";
+import type { ExplainResult, QueryResult, SqlErrorDetails } from "@/types/query";
 
-/** In-flight requests per editor tab, used for client-side cancellation. */
-const controllers = new Map<string, AbortController>();
+interface InFlight {
+  controller: AbortController;
+  executionId: string;
+}
+
+/** In-flight requests per editor tab, used for cancellation. */
+const inflight = new Map<string, InFlight>();
+
+export interface RunOptions {
+  /** Character offset of `sql` within the editor document (for error markers). */
+  offset?: number;
+}
+
+function begin(tabId: string, kind: "execute" | "explain"): InFlight {
+  inflight.get(tabId)?.controller.abort();
+  const entry: InFlight = { controller: new AbortController(), executionId: crypto.randomUUID() };
+  inflight.set(tabId, entry);
+  useEditorStore.getState().startExec(tabId, kind, entry.executionId);
+  return entry;
+}
+
+function finish(tabId: string, entry: InFlight) {
+  if (inflight.get(tabId) === entry) inflight.delete(tabId);
+}
+
+function describeError(err: ApiError): { text: string; detail?: string } {
+  const d = (err.details ?? {}) as SqlErrorDetails;
+  const lines: string[] = [];
+  if (d.sqlstate) lines.push(`SQLSTATE ${d.sqlstate}`);
+  if (d.detail) lines.push(`Detail: ${d.detail}`);
+  if (d.hint) lines.push(`Hint: ${d.hint}`);
+  if (typeof d.position === "number") lines.push(`Position: ${d.position}`);
+  return { text: err.message, detail: lines.length ? lines.join("\n") : undefined };
+}
 
 export function useQueryRunner() {
-  const startExec = useEditorStore((s) => s.startExec);
-  const finishExec = useEditorStore((s) => s.finishExec);
-  const failExec = useEditorStore((s) => s.failExec);
-  const addMessage = useEditorStore((s) => s.addMessage);
+  const qc = useQueryClient();
+  const store = useEditorStore;
+  const maxRows = useWorkspaceStore((s) => s.maxRows);
 
   const run = useCallback(
-    async (tabId: string, sql: string) => {
+    async (tabId: string, sql: string, opts: RunOptions = {}) => {
+      const connectionId = useWorkspaceStore.getState().activeConnectionId;
       if (!sql.trim()) return;
-      controllers.get(tabId)?.abort();
-      const controller = new AbortController();
-      controllers.set(tabId, controller);
-      startExec(tabId, "execute", crypto.randomUUID());
+      if (!connectionId) {
+        toast.error("Select or add a database connection first.");
+        return;
+      }
+      const s = store.getState();
+      const entry = begin(tabId, "execute");
       try {
-        const result = await mockExecute(sql, controller.signal);
-        finishExec(tabId, result);
-        addMessage(tabId, {
+        const result = await api.post<QueryResult>(
+          "/api/query/execute",
+          { connection_id: connectionId, query: sql, max_rows: maxRows, execution_id: entry.executionId },
+          { signal: entry.controller.signal },
+        );
+        s.finishExec(tabId, result);
+        const what =
+          result.columns.length === 0 && result.rows_affected !== null
+            ? `${formatNumber(result.rows_affected)} rows affected`
+            : `${formatNumber(result.row_count)} rows`;
+        s.addMessage(tabId, {
           level: "success",
-          text: `${result.command ?? "Statement"} returned ${formatNumber(result.row_count)} rows in ${formatDuration(result.execution_time_ms)}.`,
+          text: `${result.command ?? "Statement"} completed · ${what} · ${formatDuration(result.execution_time_ms)}`,
         });
-      } catch (err) {
-        if (err instanceof DOMException && err.name === "AbortError") {
-          failExec(tabId, { code: "cancelled", message: "Query cancelled." });
-          addMessage(tabId, { level: "warning", text: "Query cancelled." });
-          return;
+        if (result.truncated) {
+          s.addMessage(tabId, {
+            level: "warning",
+            text: `Result truncated to ${formatNumber(result.row_count)} rows. Add a LIMIT or raise the row limit in Settings.`,
+          });
         }
-        const message = err instanceof Error ? err.message : "Unknown error";
-        failExec(tabId, { code: "sql_error", message });
-        addMessage(tabId, { level: "error", text: message });
+      } catch (err) {
+        if (err instanceof DOMException && err.name === "AbortError") return;
+        const apiErr =
+          err instanceof ApiError ? err : new ApiError(0, "unknown", err instanceof Error ? err.message : "Unknown error");
+        const { text, detail } = describeError(apiErr);
+        s.failExec(tabId, { code: apiErr.code, message: text, details: { ...(apiErr.details as object), sqlOffset: opts.offset ?? 0 } });
+        s.addMessage(tabId, {
+          level: apiErr.code === "query_cancelled" ? "warning" : "error",
+          text: apiErr.code === "query_cancelled" ? "Query cancelled." : text,
+          detail,
+        });
       } finally {
-        if (controllers.get(tabId) === controller) controllers.delete(tabId);
+        finish(tabId, entry);
+        // Execution may be recorded in history.
+        void qc.invalidateQueries({ queryKey: ["history"] });
       }
     },
-    [startExec, finishExec, failExec, addMessage],
+    [qc, store, maxRows],
   );
 
-  const cancel = useCallback((tabId: string) => {
-    controllers.get(tabId)?.abort();
-  }, []);
+  const explain = useCallback(
+    async (tabId: string, sql: string, { analyze = false, offset = 0 }: { analyze?: boolean; offset?: number } = {}) => {
+      const connectionId = useWorkspaceStore.getState().activeConnectionId;
+      if (!sql.trim()) return;
+      if (!connectionId) {
+        toast.error("Select or add a database connection first.");
+        return;
+      }
+      const s = store.getState();
+      const entry = begin(tabId, "explain");
+      try {
+        const plan = await api.post<ExplainResult>(
+          "/api/query/explain",
+          {
+            connection_id: connectionId,
+            query: sql,
+            analyze,
+            confirm_analyze: analyze,
+            execution_id: entry.executionId,
+          },
+          { signal: entry.controller.signal },
+        );
+        s.finishExplain(tabId, plan);
+        s.addMessage(tabId, {
+          level: "info",
+          text: analyze
+            ? `EXPLAIN ANALYZE completed · planning ${formatDuration(plan.planning_time_ms)} · execution ${formatDuration(plan.execution_time_ms)}`
+            : "Execution plan generated.",
+        });
+      } catch (err) {
+        if (err instanceof DOMException && err.name === "AbortError") return;
+        const apiErr =
+          err instanceof ApiError ? err : new ApiError(0, "unknown", err instanceof Error ? err.message : "Unknown error");
+        const { text, detail } = describeError(apiErr);
+        s.failExplain(tabId, { code: apiErr.code, message: text, details: { ...(apiErr.details as object), sqlOffset: offset } });
+        s.addMessage(tabId, { level: "error", text: `EXPLAIN failed: ${text}`, detail });
+      } finally {
+        finish(tabId, entry);
+      }
+    },
+    [store],
+  );
 
-  return { run, cancel };
+  /** Cancels server-side first (pg_cancel_backend), then aborts the request. */
+  const cancel = useCallback(
+    async (tabId: string) => {
+      const entry = inflight.get(tabId);
+      if (!entry) return;
+      try {
+        await api.post(`/api/query/${entry.executionId}/cancel`);
+      } catch {
+        // The execution may have just finished; fall through to abort.
+      }
+      // Give the server a moment to report the cancellation, then abort.
+      setTimeout(() => {
+        if (inflight.get(tabId) === entry) {
+          entry.controller.abort();
+          inflight.delete(tabId);
+          store.getState().failExec(tabId, { code: "query_cancelled", message: "Query cancelled." });
+          store.getState().addMessage(tabId, { level: "warning", text: "Query cancelled." });
+        }
+      }, 1500);
+    },
+    [store],
+  );
+
+  return { run, explain, cancel };
 }

@@ -41,6 +41,7 @@ thiserror = "2"
 dotenvy = "0.15"
 aes-gcm = "0.10"
 argon2 = "0.5"
+futures-util = { version = "0.3", default-features = false, features = ["std"] }
 sha2 = "0.10"
 base64 = "0.22"
 zeroize = { version = "1", features = ["serde", "zeroize_derive"] }
