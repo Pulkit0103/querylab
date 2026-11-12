@@ -89,7 +89,7 @@ DATABASE_URL=postgres://querylab:querylab@localhost:5432/querylab \
   cargo test -- --include-ignored
 
 # Frontend
-cd frontend && npm run lint && npm run build
+cd frontend && npm run lint && npm run typecheck && npm test && npm run build
 ```
 
 ## Backend architecture
@@ -205,6 +205,22 @@ of SQL text. Use a role with only `SELECT` grants for defence in depth.
   `analyze: true` additionally requires `confirm_analyze: true` and always
   runs inside a READ ONLY transaction that is rolled back, so ANALYZE cannot
   modify data even on read-write connections.
+
+## SQL editor
+
+- Monaco with custom dark and light themes, multiple persistent tabs,
+  bracket matching, auto-indent, find/replace (`Ctrl+F` / `Ctrl+H`) and
+  comment toggling (`Ctrl+/`).
+- `Ctrl+Enter` runs the selection, or else the **statement under the
+  cursor**. The splitter understands quotes, `E''` strings, dollar quoting
+  and nested comments, and briefly highlights the executed range.
+- Schema-aware autocomplete from `/catalog`:
+  - tables (schema-qualified outside `public`), after `FROM`/`JOIN`
+  - `schema.` → that schema's tables
+  - `alias.` → columns with their types
+  - keywords and common functions
+- `Ctrl+S` saves, `Ctrl+Shift+F` formats (PostgreSQL dialect). A keyboard
+  shortcut reference sits in the toolbar.
 
 ## Configuration (backend)
 

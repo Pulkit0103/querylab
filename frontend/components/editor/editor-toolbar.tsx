@@ -20,6 +20,8 @@ import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip
 import { formatDuration, formatNumber } from "@/lib/format";
 import type { ExecState } from "@/stores/editor-store";
 
+import { ShortcutsPopover } from "./shortcuts-popover";
+
 interface EditorToolbarProps {
   exec: ExecState;
   canRun: boolean;
@@ -135,7 +137,7 @@ export function EditorToolbar(props: EditorToolbarProps) {
             <Play className="size-3 fill-current" /> Run
           </TooltipTrigger>
           <TooltipContent side="bottom">
-            Run selection or statement <Kbd>Ctrl ↵</Kbd>
+            Run selection or statement under cursor <Kbd>Ctrl ↵</Kbd>
           </TooltipContent>
         </Tooltip>
       )}
@@ -163,8 +165,11 @@ export function EditorToolbar(props: EditorToolbarProps) {
         <Eraser className="size-3.5" />
       </ToolButton>
 
-      <div className="ml-auto truncate pl-2 text-xs">
-        <ExecStatus exec={props.exec} />
+      <div className="ml-auto flex min-w-0 items-center gap-2 pl-2 text-xs">
+        <span className="truncate">
+          <ExecStatus exec={props.exec} />
+        </span>
+        <ShortcutsPopover />
       </div>
     </div>
   );

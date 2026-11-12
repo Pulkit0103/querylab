@@ -10,12 +10,15 @@ import { ResizableHandle, ResizablePanel, ResizablePanelGroup } from "@/componen
 import { useActiveConnection } from "@/hooks/use-connections";
 import { useMediaQuery } from "@/hooks/use-media-query";
 import { useQueryRunner } from "@/hooks/use-query-runner";
+import { useCatalog } from "@/hooks/use-schema";
 import { formatSql } from "@/lib/format";
 import { previewSql } from "@/lib/sql-ident";
+import { statementAt, trimStatement } from "@/lib/sql-statements";
 import { useEditorStore } from "@/stores/editor-store";
 
 import { EditorTabs } from "./editor-tabs";
 import { EditorToolbar } from "./editor-toolbar";
+import { setCompletionCatalog } from "./sql-completion";
 import { SqlEditor, type SqlEditorHandle } from "./sql-editor";
 
 export function EditorWorkspace() {
@@ -32,16 +35,42 @@ export function EditorWorkspace() {
 
   const runtime = useEditorStore((s) => s.runtime[activeTabId]);
 
-  /** The text to execute: the selection if any, otherwise the whole document. */
+  const catalog = useCatalog(connection?.id ?? null);
+  useEffect(() => {
+    if (handle) setCompletionCatalog(handle.monaco, catalog.data ?? []);
+  }, [handle, catalog.data]);
+
+  /**
+   * The text to execute: the selection if any, otherwise the statement under
+   * the cursor. The executed range is briefly highlighted.
+   */
   const currentTarget = useCallback((): { sql: string; offset: number } => {
     const editor = handle?.editor;
     const model = editor?.getModel();
-    const selection = editor?.getSelection();
-    if (model && selection && !selection.isEmpty()) {
+    if (!editor || !model) return { sql: activeTab.sql, offset: 0 };
+    const selection = editor.getSelection();
+    let target: { sql: string; offset: number } | null = null;
+    if (selection && !selection.isEmpty()) {
       const text = model.getValueInRange(selection);
-      if (text.trim()) return { sql: text, offset: model.getOffsetAt(selection.getStartPosition()) };
+      if (text.trim()) target = { sql: text, offset: model.getOffsetAt(selection.getStartPosition()) };
     }
-    return { sql: model?.getValue() ?? activeTab.sql, offset: 0 };
+    if (!target) {
+      const position = editor.getPosition();
+      const statement = statementAt(model.getValue(), position ? model.getOffsetAt(position) : 0);
+      if (!statement) return { sql: "", offset: 0 };
+      const { text, offset } = trimStatement(statement);
+      target = { sql: text, offset };
+    }
+    const start = model.getPositionAt(target.offset);
+    const end = model.getPositionAt(target.offset + target.sql.length);
+    const decorations = editor.createDecorationsCollection([
+      {
+        range: { startLineNumber: start.lineNumber, startColumn: start.column, endLineNumber: end.lineNumber, endColumn: end.column },
+        options: { className: "ql-executed-range", isWholeLine: false },
+      },
+    ]);
+    setTimeout(() => decorations.clear(), 700);
+    return target;
   }, [handle, activeTab.sql]);
 
   const runCurrent = useCallback(() => {
