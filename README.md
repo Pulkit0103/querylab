@@ -222,6 +222,36 @@ of SQL text. Use a role with only `SELECT` grants for defence in depth.
 - `Ctrl+S` saves, `Ctrl+Shift+F` formats (PostgreSQL dialect). A keyboard
   shortcut reference sits in the toolbar.
 
+## Execution plans
+
+- **Explain** shows the planner's estimates. **Explain Analyze…** (the menu
+  next to Explain) shows the statement and asks for confirmation before
+  running it. ANALYZE runs with `BUFFERS` inside a rolled-back read-only
+  transaction. Data-modifying statements, including writable CTEs, fail with
+  SQLSTATE 25006 and change nothing.
+- The plan tree (`lib/plan.ts`, rendered by `components/results/plan-view.tsx`)
+  shows, for every node:
+  - its type, the relation and index it uses, and its join type
+  - estimated → actual rows
+  - its loop count
+  - its **self** time (or self cost for plain EXPLAIN)
+  - a bar showing its share of the total
+- The time a node spends on its own excludes the time of its children.
+  Inclusive time is time per loop multiplied by loops, except under
+  `Gather`, where loops are workers running in parallel.
+- **Hot spots:** nodes with at least 50% of the time are marked *hot*, and
+  those with at least 20% are marked *warm*. The summary bar links to the
+  slowest node and to the worst row estimate.
+- **Warnings:**
+  - row estimates off by 10× or more
+  - sequential scans whose filter discards at least 90% of at least 1,000
+    rows
+  - sorts or hashes that spill to disk
+  - temp-file writes
+- Each node expands to show its conditions, sort and group keys, buffers,
+  output columns and memory. The raw JSON plan is one click away and can be
+  copied.
+
 ## Configuration (backend)
 
 | Variable                   | Default                  | Description |

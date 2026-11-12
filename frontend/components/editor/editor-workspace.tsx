@@ -19,6 +19,7 @@ import { useEditorStore } from "@/stores/editor-store";
 
 import { EditorTabs } from "./editor-tabs";
 import { EditorToolbar } from "./editor-toolbar";
+import { ExplainMenu } from "./explain-analyze";
 import { SaveQueryDialog } from "./save-query-dialog";
 import { setCompletionCatalog } from "./sql-completion";
 import { SqlEditor, type SqlEditorHandle } from "./sql-editor";
@@ -171,10 +172,13 @@ export function EditorWorkspace() {
     }
   }, [activeTab.id, handle, updateSql]);
 
-  const explain = useCallback(() => {
-    const { sql, offset } = currentTarget();
-    void runExplain(activeTab.id, sql, { offset });
-  }, [currentTarget, runExplain, activeTab.id]);
+  const explainTarget = useCallback(
+    ({ sql, offset }: { sql: string; offset: number }, analyze: boolean) => {
+      void runExplain(activeTab.id, sql, { offset, analyze });
+    },
+    [runExplain, activeTab.id],
+  );
+  const explain = useCallback(() => explainTarget(currentTarget(), false), [currentTarget, explainTarget]);
 
   const editorArea = (
     <ResizablePanelGroup orientation="vertical">
@@ -191,6 +195,13 @@ export function EditorWorkspace() {
             onSave={save}
             onCopy={copy}
             onClear={clear}
+            explainExtra={
+              <ExplainMenu
+                disabled={exec.status === "running" || activeTab.sql.trim().length === 0}
+                getTarget={currentTarget}
+                onExplain={explainTarget}
+              />
+            }
           />
           <div className="min-h-0 flex-1">
             <SqlEditor
