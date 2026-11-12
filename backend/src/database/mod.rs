@@ -3,6 +3,7 @@
 //! `services`. All statements are parameterised.
 
 pub mod connections;
+pub mod library;
 pub mod sessions;
 pub mod users;
 
@@ -18,10 +19,17 @@ pub static MIGRATOR: Migrator = sqlx::migrate!("./migrations");
 /// the API can start (and report a degraded health status) even if the
 /// database is temporarily unavailable.
 pub fn create_pool(config: &Config) -> Result<PgPool, sqlx::Error> {
+    // Keep a few warm connections: establishing one costs a TLS + SCRAM
+    // handshake (and a new server process), which would otherwise land on the
+    // request path.
     PgPoolOptions::new()
         .max_connections(config.database_max_connections)
-        .min_connections(0)
-        .acquire_timeout(Duration::from_secs(5))
+        .min_connections(
+            config
+                .database_min_connections
+                .min(config.database_max_connections),
+        )
+        .acquire_timeout(Duration::from_secs(10))
         .idle_timeout(Duration::from_secs(300))
         .max_lifetime(Duration::from_secs(1800))
         .connect_lazy(&config.database_url)

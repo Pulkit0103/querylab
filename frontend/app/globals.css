@@ -84,6 +84,9 @@
   --chart-4: oklch(0.6 0.2 25);
   --chart-5: oklch(0.6 0.12 300);
   --radius: 0.5rem;
+  /* Chart series (validated: CVD-safe, >=3:1 on card surfaces) */
+  --viz-1: #2a78d6;
+  --viz-2: #eb6834;
   --sidebar: oklch(0.97 0.003 250);
   --sidebar-foreground: oklch(0.25 0.01 260);
   --sidebar-primary: oklch(0.62 0.13 170);
@@ -124,6 +127,8 @@
   --chart-3: oklch(0.8 0.14 80);
   --chart-4: oklch(0.68 0.19 24);
   --chart-5: oklch(0.7 0.12 300);
+  --viz-1: #3987e5;
+  --viz-2: #d95926;
   --sidebar: oklch(0.155 0.004 260);
   --sidebar-foreground: oklch(0.88 0.004 260);
   --sidebar-primary: oklch(0.76 0.13 170);

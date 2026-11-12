@@ -21,7 +21,7 @@ const REQUEST_ID: HeaderName = HeaderName::from_static("x-request-id");
 const MAX_BODY_BYTES: usize = 2 * 1024 * 1024;
 
 pub fn build_router(state: AppState) -> Router {
-    use handlers::{auth, connections, query, schema};
+    use handlers::{auth, connections, library, query, schema};
 
     let api = Router::new()
         .route("/health", get(handlers::health::health))
@@ -63,7 +63,36 @@ pub fn build_router(state: AppState) -> Router {
         // SQL execution
         .route("/query/execute", post(query::execute))
         .route("/query/explain", post(query::explain))
-        .route("/query/{execution_id}/cancel", post(query::cancel));
+        .route("/query/{execution_id}/cancel", post(query::cancel))
+        // History
+        .route(
+            "/history",
+            get(library::list_history).delete(library::clear_history),
+        )
+        .route(
+            "/history/{id}",
+            get(library::get_history).delete(library::delete_history),
+        )
+        // Saved queries and collections
+        .route(
+            "/queries",
+            get(library::list_saved).post(library::create_saved),
+        )
+        .route(
+            "/queries/{id}",
+            get(library::get_saved)
+                .put(library::update_saved)
+                .delete(library::delete_saved),
+        )
+        .route(
+            "/collections",
+            get(library::list_collections).post(library::create_collection),
+        )
+        .route(
+            "/collections/{id}",
+            axum::routing::put(library::rename_collection).delete(library::delete_collection),
+        )
+        .route("/stats", get(library::stats));
 
     Router::new()
         .route("/health", get(handlers::health::health))

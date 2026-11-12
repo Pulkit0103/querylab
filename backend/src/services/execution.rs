@@ -313,6 +313,14 @@ pub async fn execute(
     let (mut conn, read_only, _guard) =
         open_registered(state, user, req.connection_id, execution_id, false).await?;
     begin(&mut conn, read_only, timeout).await?;
+    // A cancel that arrived while the backend was idle between setup
+    // statements is ignored by PostgreSQL; honour it here instead.
+    if state.executions.was_cancelled(execution_id) {
+        drop(conn);
+        return Err(AppError::QueryCancelled {
+            execution_time_ms: 0,
+        });
+    }
 
     let started = Instant::now();
     let outcome = run_statement(&mut conn, &req.query, max_rows, !read_only).await;

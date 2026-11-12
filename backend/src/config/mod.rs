@@ -45,6 +45,8 @@ pub struct Config {
     /// Connection string for the application metadata database.
     pub database_url: String,
     pub database_max_connections: u32,
+    /// Idle connections kept open to avoid connect latency on requests.
+    pub database_min_connections: u32,
     pub run_migrations: bool,
     /// Origins allowed to call the API directly (CORS). Same-origin proxying
     /// through the frontend does not require CORS.
@@ -139,6 +141,7 @@ impl Config {
             bind_addr,
             database_url,
             database_max_connections: parse_or("DATABASE_MAX_CONNECTIONS", 10)?,
+            database_min_connections: parse_or("DATABASE_MIN_CONNECTIONS", 2)?,
             run_migrations: parse_or("RUN_MIGRATIONS", true)?,
             cors_origins,
             log_format,
@@ -179,6 +182,7 @@ impl Config {
             bind_addr: "127.0.0.1:0".parse().expect("valid addr"),
             database_url: database_url.to_string(),
             database_max_connections: 5,
+            database_min_connections: 0,
             run_migrations: true,
             cors_origins: vec!["http://localhost:3000".into()],
             log_format: LogFormat::Pretty,

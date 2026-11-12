@@ -10,6 +10,7 @@ import { ResizableHandle, ResizablePanel, ResizablePanelGroup } from "@/componen
 import { useActiveConnection } from "@/hooks/use-connections";
 import { useMediaQuery } from "@/hooks/use-media-query";
 import { useQueryRunner } from "@/hooks/use-query-runner";
+import { useUpdateSavedQuery } from "@/hooks/use-library";
 import { useCatalog } from "@/hooks/use-schema";
 import { formatSql } from "@/lib/format";
 import { previewSql } from "@/lib/sql-ident";
@@ -18,6 +19,7 @@ import { useEditorStore } from "@/stores/editor-store";
 
 import { EditorTabs } from "./editor-tabs";
 import { EditorToolbar } from "./editor-toolbar";
+import { SaveQueryDialog } from "./save-query-dialog";
 import { setCompletionCatalog } from "./sql-completion";
 import { SqlEditor, type SqlEditorHandle } from "./sql-editor";
 
@@ -123,9 +125,31 @@ export function EditorWorkspace() {
     }
   }, [activeTab, handle, updateSql]);
 
+  const [saveOpen, setSaveOpen] = useState(false);
+  const updateSaved = useUpdateSavedQuery();
+  const markSaved = useEditorStore((s) => s.markSaved);
+
   const save = useCallback(() => {
-    toast.info("Saved queries become available once the API is connected.");
-  }, []);
+    if (!activeTab.sql.trim()) {
+      toast.error("Nothing to save — the editor is empty.");
+      return;
+    }
+    if (activeTab.savedQueryId) {
+      const { id: tabId, title, sql, savedQueryId } = activeTab;
+      updateSaved.mutate(
+        { id: savedQueryId, body: { sql_content: sql } },
+        {
+          onSuccess: (saved) => {
+            markSaved(tabId, saved.id, title);
+            toast.success(`Saved “${saved.name}”`);
+          },
+          onError: (e) => toast.error(e.status === 404 ? "This saved query no longer exists." : e.message),
+        },
+      );
+      return;
+    }
+    setSaveOpen(true);
+  }, [activeTab, updateSaved, markSaved]);
 
   const copy = useCallback(() => {
     void navigator.clipboard.writeText(activeTab.sql).then(
@@ -185,6 +209,14 @@ export function EditorWorkspace() {
       <ResizablePanel defaultSize="42%" minSize="12%" collapsible collapsedSize="0%">
         <ResultsPanel tabId={activeTab.id} />
       </ResizablePanel>
+      <SaveQueryDialog
+        open={saveOpen}
+        onOpenChange={setSaveOpen}
+        defaultName={activeTab.title}
+        sql={activeTab.sql}
+        connectionId={connection?.id ?? null}
+        onSaved={(saved) => markSaved(activeTab.id, saved.id, saved.name)}
+      />
     </ResizablePanelGroup>
   );
 
