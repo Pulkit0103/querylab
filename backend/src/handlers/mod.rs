@@ -4,6 +4,7 @@
 pub mod auth;
 pub mod connections;
 pub mod health;
+pub mod query;
 pub mod schema;
 pub mod version;
 

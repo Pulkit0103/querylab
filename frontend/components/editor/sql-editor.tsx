@@ -19,8 +19,8 @@ interface SqlEditorProps {
   path: string;
   value: string;
   onChange: (value: string) => void;
-  /** Receives the selected text, or the full document when nothing is selected. */
-  onRun: (sql: string) => void;
+  /** Ctrl+Enter / context menu "Run Query"; the caller decides what to run. */
+  onRun: () => void;
   onSave: () => void;
   onFormat: () => void;
   onMount?: (handle: SqlEditorHandle) => void;
@@ -90,13 +90,7 @@ export function SqlEditor({ path, value, onChange, onRun, onSave, onFormat, onMo
   }, [onRun, onSave, onFormat]);
 
   const handleMount: OnMount = (editor, monaco) => {
-    const runCurrent = () => {
-      const model = editor.getModel();
-      if (!model) return;
-      const selection = editor.getSelection();
-      const selected = selection && !selection.isEmpty() ? model.getValueInRange(selection) : "";
-      handlers.current.onRun(selected.trim() ? selected : model.getValue());
-    };
+    const runCurrent = () => handlers.current.onRun();
 
     editor.addAction({
       id: "querylab.run",

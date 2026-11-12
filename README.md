@@ -171,6 +171,41 @@ connection**. User SQL never runs on QueryLab's metadata pool.
   version, role and read-only status. They warn when the role is a
   superuser, read-write mode is on, or TLS is not required.
 
+## SQL execution engine
+
+`POST /api/query/execute` runs one statement on a dedicated connection:
+
+1. Ownership is checked, credentials are decrypted, and the network policy is enforced.
+2. `BEGIN READ ONLY` (read-only connections) or `BEGIN`, with
+   `statement_timeout` set through `set_config()` (parameterised).
+3. The statement is prepared with the **extended query protocol**. PostgreSQL
+   accepts exactly one statement there, so `SELECT 1; COMMIT; DROP …` is
+   rejected by the server instead of escaping the read-only transaction.
+4. Rows are streamed up to the row limit and a ~32 MiB byte budget.
+5. Read-only transactions are rolled back. Read-write transactions are
+   committed after the statement has been fully drained, so a truncated
+   `UPDATE … RETURNING` is never half-applied.
+6. The connection is closed, so session state never leaks between runs.
+
+Read-only enforcement relies on PostgreSQL itself — never on regex filtering
+of SQL text. Use a role with only `SELECT` grants for defence in depth.
+
+- **Cancellation**: clients send an `execution_id`.
+  `POST /api/query/{execution_id}/cancel` issues `pg_cancel_backend` for the
+  running backend; only its owner can cancel it.
+- **Limits**: per-user rate limit, per-user concurrency limit, statement
+  timeout (capped below the HTTP timeout), and a row and byte cap.
+- **Values**: `numeric`, `money` and int8 values beyond 2^53 are returned as
+  strings to preserve precision. `bytea` is returned as hex. Dates and
+  timestamps (including `±infinity`), intervals, inet/cidr, json/jsonb, uuid
+  and common arrays are decoded. Other types fall back to text.
+- **Errors** carry SQLSTATE, position, detail and hint. The editor marks the
+  reported position.
+- `POST /api/query/explain` returns `EXPLAIN (FORMAT JSON)`.
+  `analyze: true` additionally requires `confirm_analyze: true` and always
+  runs inside a READ ONLY transaction that is rolled back, so ANALYZE cannot
+  modify data even on read-write connections.
+
 ## Configuration (backend)
 
 | Variable                   | Default                  | Description |
@@ -193,6 +228,12 @@ connection**. User SQL never runs on QueryLab's metadata pool.
 | `ALLOW_PRIVATE_NETWORKS`   | `false`                  | Allow target DBs on private/loopback networks (dev only) |
 | `TARGET_CONNECT_TIMEOUT_SECS` | `10`                  | Connect timeout for target databases |
 | `TARGET_CONNECT_RATE_LIMIT_PER_MINUTE` | `60`         | Target connections per user per minute |
+| `QUERY_TIMEOUT_SECS`       | `30`                     | Default statement timeout |
+| `QUERY_MAX_TIMEOUT_SECS`   | `300`                    | Max timeout a client may request (capped below `REQUEST_TIMEOUT_SECS`) |
+| `QUERY_DEFAULT_MAX_ROWS`   | `1000`                   | Default row limit |
+| `QUERY_MAX_ROWS`           | `10000`                  | Hard row limit |
+| `QUERY_RATE_LIMIT_PER_MINUTE` | `120`                 | Executions per user per minute |
+| `MAX_CONCURRENT_QUERIES_PER_USER` | `3`               | Simultaneous executions per user |
 
 ## API
 
@@ -218,6 +259,9 @@ connection**. User SQL never runs on QueryLab's metadata pool.
 | GET    | `/api/connections/{id}/tables/{table}/indexes?schema=` | Index definitions   |
 | GET    | `/api/connections/{id}/tables/{table}/relationships?schema=` | Incoming/outgoing FKs |
 | GET    | `/api/connections/{id}/catalog` | All tables + columns (autocomplete) |
+| POST   | `/api/query/execute`      | Execute one SQL statement                |
+| POST   | `/api/query/explain`      | EXPLAIN / EXPLAIN ANALYZE (JSON plan)    |
+| POST   | `/api/query/{execution_id}/cancel` | Cancel a running execution      |
 
 Schema metadata is read from `pg_catalog` with fully parameterised queries
 (exact schema/table names, no identifier quoting or string building) on a

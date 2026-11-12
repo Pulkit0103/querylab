@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useState } from "react";
+import { useCallback, useEffect, useState } from "react";
 import { toast } from "sonner";
 
 import { NoConnection } from "@/components/explorer/no-connection";
@@ -26,19 +26,55 @@ export function EditorWorkspace() {
   const exec = useEditorStore((s) => s.runtime[activeTabId]?.exec) ?? { status: "idle" as const };
   const activeTab = tabs.find((t) => t.id === activeTabId) ?? tabs[0];
   const [handle, setHandle] = useState<SqlEditorHandle | null>(null);
-  const { run, cancel } = useQueryRunner();
+  const { run, cancel, explain: runExplain } = useQueryRunner();
   const isDesktop = useMediaQuery("(min-width: 768px)");
   const { connection, isPending: connectionsPending } = useActiveConnection();
 
-  const runSql = useCallback((sql: string) => void run(activeTab.id, sql), [run, activeTab.id]);
+  const runtime = useEditorStore((s) => s.runtime[activeTabId]);
 
-  const runFromToolbar = useCallback(() => {
+  /** The text to execute: the selection if any, otherwise the whole document. */
+  const currentTarget = useCallback((): { sql: string; offset: number } => {
     const editor = handle?.editor;
     const model = editor?.getModel();
     const selection = editor?.getSelection();
-    const selected = model && selection && !selection.isEmpty() ? model.getValueInRange(selection) : "";
-    runSql(selected.trim() ? selected : activeTab.sql);
-  }, [handle, runSql, activeTab.sql]);
+    if (model && selection && !selection.isEmpty()) {
+      const text = model.getValueInRange(selection);
+      if (text.trim()) return { sql: text, offset: model.getOffsetAt(selection.getStartPosition()) };
+    }
+    return { sql: model?.getValue() ?? activeTab.sql, offset: 0 };
+  }, [handle, activeTab.sql]);
+
+  const runCurrent = useCallback(() => {
+    const { sql, offset } = currentTarget();
+    void run(activeTab.id, sql, { offset });
+  }, [currentTarget, run, activeTab.id]);
+
+  // Show the server-reported error position as a marker in the editor.
+  useEffect(() => {
+    const editor = handle?.editor;
+    const monaco = handle?.monaco;
+    const model = editor?.getModel();
+    if (!monaco || !model) return;
+    const error =
+      runtime?.exec.status === "error" ? runtime.exec.error : runtime?.exec.status === "idle" ? runtime.planError : null;
+    const details = (error?.details ?? {}) as { position?: number | null; sqlOffset?: number };
+    if (!error || typeof details.position !== "number") {
+      monaco.editor.setModelMarkers(model, "querylab", []);
+      return;
+    }
+    const start = model.getPositionAt((details.sqlOffset ?? 0) + details.position - 1);
+    const word = model.getWordAtPosition(start);
+    monaco.editor.setModelMarkers(model, "querylab", [
+      {
+        severity: monaco.MarkerSeverity.Error,
+        message: error.message,
+        startLineNumber: start.lineNumber,
+        startColumn: word?.startColumn ?? start.column,
+        endLineNumber: start.lineNumber,
+        endColumn: word?.endColumn ?? start.column + 1,
+      },
+    ]);
+  }, [handle, runtime?.exec, runtime?.planError]);
 
   const format = useCallback(() => {
     try {
@@ -83,8 +119,9 @@ export function EditorWorkspace() {
   }, [activeTab.id, handle, updateSql]);
 
   const explain = useCallback(() => {
-    toast.info("Execution plans become available once the API is connected.");
-  }, []);
+    const { sql, offset } = currentTarget();
+    void runExplain(activeTab.id, sql, { offset });
+  }, [currentTarget, runExplain, activeTab.id]);
 
   const editorArea = (
     <ResizablePanelGroup orientation="vertical">
@@ -94,7 +131,7 @@ export function EditorWorkspace() {
           <EditorToolbar
             exec={exec}
             canRun={activeTab.sql.trim().length > 0}
-            onRun={runFromToolbar}
+            onRun={runCurrent}
             onCancel={() => cancel(activeTab.id)}
             onExplain={explain}
             onFormat={format}
@@ -107,7 +144,7 @@ export function EditorWorkspace() {
               path={`querylab://tab/${activeTab.id}.sql`}
               value={activeTab.sql}
               onChange={(v) => updateSql(activeTab.id, v)}
-              onRun={runSql}
+              onRun={runCurrent}
               onSave={save}
               onFormat={format}
               onMount={setHandle}
