@@ -15,14 +15,22 @@ export class ApiError extends Error {
   readonly status: number;
   readonly code: string;
   readonly details?: unknown;
+  /** `X-Request-Id` of the failed request, for correlating with server logs. */
+  readonly requestId?: string;
 
-  constructor(status: number, code: string, message: string, details?: unknown) {
+  constructor(status: number, code: string, message: string, details?: unknown, requestId?: string) {
     super(message);
     this.name = "ApiError";
     this.status = status;
     this.code = code;
     this.details = details;
+    this.requestId = requestId;
   }
+}
+
+/** Server faults include a reference users can quote when reporting them. */
+export function errorMessageFor(status: number, message: string, requestId: string | null): string {
+  return status >= 500 && requestId ? `${message} (reference ${requestId})` : message;
 }
 
 type Method = "GET" | "POST" | "PUT" | "DELETE";
@@ -80,11 +88,13 @@ async function request<T>(method: Method, path: string, opts: RequestOptions = {
 
   if (!res.ok) {
     const body = data as Partial<ApiErrorBody> | undefined;
+    const requestId = res.headers.get("x-request-id");
     throw new ApiError(
       res.status,
       body?.error?.code ?? "http_error",
-      body?.error?.message ?? `Request failed with status ${res.status}`,
+      errorMessageFor(res.status, body?.error?.message ?? `Request failed with status ${res.status}`, requestId),
       body?.error?.details,
+      requestId ?? undefined,
     );
   }
   return data as T;

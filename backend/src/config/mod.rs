@@ -47,6 +47,12 @@ pub struct Config {
     pub database_max_connections: u32,
     /// Idle connections kept open to avoid connect latency on requests.
     pub database_min_connections: u32,
+    /// How long a request waits for a free metadata connection.
+    pub database_acquire_timeout: Duration,
+    /// Idle connections above the minimum are closed after this long.
+    pub database_idle_timeout: Duration,
+    /// Connections are recycled after this long (picks up failovers/DNS changes).
+    pub database_max_lifetime: Duration,
     pub run_migrations: bool,
     /// Origins allowed to call the API directly (CORS). Same-origin proxying
     /// through the frontend does not require CORS.
@@ -142,6 +148,18 @@ impl Config {
             database_url,
             database_max_connections: parse_or("DATABASE_MAX_CONNECTIONS", 10)?,
             database_min_connections: parse_or("DATABASE_MIN_CONNECTIONS", 2)?,
+            database_acquire_timeout: Duration::from_secs(parse_or(
+                "DATABASE_ACQUIRE_TIMEOUT_SECS",
+                10,
+            )?),
+            database_idle_timeout: Duration::from_secs(parse_or(
+                "DATABASE_IDLE_TIMEOUT_SECS",
+                300,
+            )?),
+            database_max_lifetime: Duration::from_secs(parse_or(
+                "DATABASE_MAX_LIFETIME_SECS",
+                1800,
+            )?),
             run_migrations: parse_or("RUN_MIGRATIONS", true)?,
             cors_origins,
             log_format,
@@ -183,6 +201,9 @@ impl Config {
             database_url: database_url.to_string(),
             database_max_connections: 5,
             database_min_connections: 0,
+            database_acquire_timeout: Duration::from_secs(10),
+            database_idle_timeout: Duration::from_secs(300),
+            database_max_lifetime: Duration::from_secs(1800),
             run_migrations: true,
             cors_origins: vec!["http://localhost:3000".into()],
             log_format: LogFormat::Pretty,

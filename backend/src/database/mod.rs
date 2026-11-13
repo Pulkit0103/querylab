@@ -29,9 +29,9 @@ pub fn create_pool(config: &Config) -> Result<PgPool, sqlx::Error> {
                 .database_min_connections
                 .min(config.database_max_connections),
         )
-        .acquire_timeout(Duration::from_secs(10))
-        .idle_timeout(Duration::from_secs(300))
-        .max_lifetime(Duration::from_secs(1800))
+        .acquire_timeout(config.database_acquire_timeout)
+        .idle_timeout(config.database_idle_timeout)
+        .max_lifetime(config.database_max_lifetime)
         .connect_lazy(&config.database_url)
 }
 

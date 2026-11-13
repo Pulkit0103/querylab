@@ -14,7 +14,9 @@ pub fn init(format: &LogFormat) {
                 fmt::layer()
                     .json()
                     .flatten_event(true)
-                    .with_current_span(true),
+                    .with_current_span(true)
+                    // The request span already carries all context.
+                    .with_span_list(false),
             )
             .init(),
         LogFormat::Pretty => registry.with(fmt::layer().compact()).init(),
