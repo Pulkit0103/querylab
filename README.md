@@ -17,7 +17,9 @@ querylab/
 ├── frontend/          Next.js application (deploys to Vercel)
 ├── backend/           Rust Axum API (deploys to Railway / Render)
 ├── scripts/sample-db/ Seed data for the local sample target database
-└── docker-compose.yml Local PostgreSQL services
+├── docs/              Deployment guide
+├── render.yaml        Render Blueprint for the API
+└── docker-compose.yml Local PostgreSQL services (+ API image with --profile full)
 ```
 
 ## Architecture
@@ -379,6 +381,19 @@ Schema metadata is read from `pg_catalog` with fully parameterised queries
 read-only connection with a statement timeout. `?schema=` defaults to `public`.
 
 All endpoints except health, version, register and login require a session.
+
+## Deployment
+
+The guide is in [docs/DEPLOYMENT.md](docs/DEPLOYMENT.md). It covers:
+
+- the frontend on **Vercel**
+- the API on **Render** (`render.yaml`) or **Railway**
+  (`backend/railway.json`), both building `backend/Dockerfile`
+- the metadata database on **Neon**
+- production environment variables, HTTPS and CORS, health checks,
+  logging, key rotation and a smoke-test checklist
+
+CI builds the production image on every pull request and smoke-tests it.
 
 ## License
 

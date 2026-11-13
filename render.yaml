@@ -1,0 +1,44 @@
+# Render Blueprint for the QueryLab API (Rust / Axum).
+# The frontend is deployed separately on Vercel; see docs/DEPLOYMENT.md.
+services:
+  - type: web
+    name: querylab-api
+    runtime: docker
+    rootDir: backend
+    dockerfilePath: ./Dockerfile
+    plan: starter
+    # In-memory rate limits and query cancellation assume one instance.
+    numInstances: 1
+    healthCheckPath: /health
+    autoDeploy: true
+    envVars:
+      - key: APP_ENV
+        value: production
+      - key: LOG_FORMAT
+        value: json
+      - key: RUST_LOG
+        value: querylab_api=info,tower_http=info,sqlx=warn
+      # Metadata database (e.g. Neon). Use the pooled or direct URL with
+      # sslmode=require.
+      - key: DATABASE_URL
+        sync: false
+      # 32 random bytes, base64 (`openssl rand -base64 32`). Back it up:
+      # stored credentials cannot be decrypted without it.
+      - key: ENCRYPTION_KEY
+        sync: false
+      - key: ENCRYPTION_KEY_ID
+        value: "1"
+      # The Vercel origin, e.g. https://querylab.vercel.app
+      - key: CORS_ORIGINS
+        sync: false
+      - key: COOKIE_SECURE
+        value: "true"
+      # Vercel's rewrite proxy + Render's load balancer.
+      - key: TRUSTED_PROXY_HOPS
+        value: "2"
+      - key: ALLOW_PRIVATE_NETWORKS
+        value: "false"
+      - key: DATABASE_MAX_CONNECTIONS
+        value: "10"
+      - key: DATABASE_MIN_CONNECTIONS
+        value: "2"
