@@ -7,15 +7,21 @@ use axum::{
     Router,
 };
 use tower_http::{
+    catch_panic::CatchPanicLayer,
     cors::{AllowOrigin, CorsLayer},
     request_id::{MakeRequestUuid, PropagateRequestIdLayer, SetRequestIdLayer},
     timeout::TimeoutLayer,
     trace::TraceLayer,
 };
 
-use crate::{handlers, middleware::csrf, state::AppState};
-
-const REQUEST_ID: HeaderName = HeaderName::from_static("x-request-id");
+use crate::{
+    handlers,
+    middleware::{
+        csrf,
+        observability::{self, REQUEST_ID},
+    },
+    state::AppState,
+};
 
 /// Maximum accepted request body (SQL text is capped at 1 MiB separately).
 const MAX_BODY_BYTES: usize = 2 * 1024 * 1024;
@@ -94,6 +100,11 @@ pub fn build_router(state: AppState) -> Router {
         )
         .route("/stats", get(library::stats));
 
+    // HSTS only makes sense when the API is served over HTTPS, which is
+    // exactly when Secure cookies are enabled.
+    let hsts = state.config.cookie_secure;
+
+    // Layers listed later wrap the ones before them (outermost last).
     Router::new()
         .route("/health", get(handlers::health::health))
         .nest("/api", api)
@@ -106,24 +117,22 @@ pub fn build_router(state: AppState) -> Router {
             state.config.request_timeout,
         ))
         .layer(cors_layer(&state.config.cors_origins))
-        .layer(PropagateRequestIdLayer::new(REQUEST_ID))
-        .layer(TraceLayer::new_for_http().make_span_with(
-            |req: &axum::http::Request<axum::body::Body>| {
-                let request_id = req
-                    .headers()
-                    .get(&REQUEST_ID)
-                    .and_then(|v| v.to_str().ok())
-                    .unwrap_or("-");
-                // Only method + path are logged; query strings and bodies may
-                // contain sensitive data and are intentionally omitted.
-                tracing::info_span!(
-                    "http",
-                    method = %req.method(),
-                    path = %req.uri().path(),
-                    request_id = %request_id,
-                )
+        .layer(CatchPanicLayer::custom(observability::panic_response))
+        .layer(axum::middleware::map_response(
+            move |mut res: axum::response::Response| async move {
+                observability::apply_security_headers(res.headers_mut(), hsts);
+                res
             },
         ))
+        .layer(PropagateRequestIdLayer::new(REQUEST_ID))
+        .layer(
+            TraceLayer::new_for_http()
+                .make_span_with(observability::RequestSpan)
+                .on_request(())
+                .on_response(observability::LogResponse)
+                // 5xx responses are already logged by `LogResponse`.
+                .on_failure(()),
+        )
         .layer(SetRequestIdLayer::new(REQUEST_ID, MakeRequestUuid))
         .with_state(state)
 }

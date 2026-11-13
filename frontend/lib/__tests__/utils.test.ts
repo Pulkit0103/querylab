@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 
 import { referencedTables } from "@/components/editor/sql-completion";
 import type { CatalogEntry } from "@/hooks/use-schema";
+import { errorMessageFor } from "@/lib/api-client";
 import { safeNextPath } from "@/lib/auth";
 import { compareCells } from "@/lib/compare-cells";
 import { parseConnectionString } from "@/lib/connection-string";
@@ -112,5 +113,13 @@ describe("referencedTables", () => {
     const map = referencedTables("select * from employees where id = 1", catalog);
     expect(map.has("where")).toBe(false);
     expect(map.get("employees")).toBeDefined();
+  });
+});
+
+describe("errorMessageFor", () => {
+  it("adds the request id to server errors only", () => {
+    expect(errorMessageFor(500, "internal server error", "abc-123")).toBe("internal server error (reference abc-123)");
+    expect(errorMessageFor(502, "bad gateway", null)).toBe("bad gateway");
+    expect(errorMessageFor(404, "connection not found", "abc-123")).toBe("connection not found");
   });
 });

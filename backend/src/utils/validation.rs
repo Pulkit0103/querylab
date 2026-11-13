@@ -76,6 +76,16 @@ impl Validator {
     }
 }
 
+/// Maps JSON extraction failures to the error envelope, keeping 413 for
+/// bodies over the size limit.
+fn json_rejection(rej: JsonRejection) -> AppError {
+    if rej.status() == axum::http::StatusCode::PAYLOAD_TOO_LARGE {
+        AppError::PayloadTooLarge
+    } else {
+        AppError::BadRequest(rej.body_text())
+    }
+}
+
 /// JSON body extractor that maps parse failures to the API error envelope and
 /// runs [`Validate`] before the handler sees the value.
 pub struct ValidatedJson<T>(pub T);
@@ -90,7 +100,7 @@ where
     async fn from_request(req: Request, state: &S) -> Result<Self, Self::Rejection> {
         let Json(value) = Json::<T>::from_request(req, state)
             .await
-            .map_err(|rej: JsonRejection| AppError::BadRequest(rej.body_text()))?;
+            .map_err(json_rejection)?;
         value.validate()?;
         Ok(ValidatedJson(value))
     }
@@ -152,7 +162,7 @@ where
     async fn from_request(req: Request, state: &S) -> Result<Self, Self::Rejection> {
         let Json(value) = Json::<T>::from_request(req, state)
             .await
-            .map_err(|rej: JsonRejection| AppError::BadRequest(rej.body_text()))?;
+            .map_err(json_rejection)?;
         Ok(ApiJson(value))
     }
 }

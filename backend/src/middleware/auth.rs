@@ -82,6 +82,8 @@ impl FromRequestParts<AppState> for AuthUser {
             .authenticate(&token)
             .await?
             .ok_or(AppError::Unauthorized)?;
+        // Attribute the request log line to the user (an opaque id only).
+        tracing::Span::current().record("user_id", tracing::field::display(user.user_id));
         parts.extensions.insert(user.clone());
         Ok(user)
     }

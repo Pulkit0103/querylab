@@ -37,6 +37,8 @@ pub enum AppError {
     Validation(Vec<FieldError>),
     #[error("{0}")]
     BadRequest(String),
+    #[error("request body is too large")]
+    PayloadTooLarge,
     #[error("authentication required")]
     Unauthorized,
     #[error("invalid email or password")]
@@ -80,6 +82,7 @@ impl AppError {
         match self {
             AppError::Validation(_) => StatusCode::UNPROCESSABLE_ENTITY,
             AppError::BadRequest(_) => StatusCode::BAD_REQUEST,
+            AppError::PayloadTooLarge => StatusCode::PAYLOAD_TOO_LARGE,
             AppError::Unauthorized | AppError::InvalidCredentials => StatusCode::UNAUTHORIZED,
             AppError::Forbidden(_) => StatusCode::FORBIDDEN,
             AppError::NotFound(_) => StatusCode::NOT_FOUND,
@@ -98,6 +101,7 @@ impl AppError {
         match self {
             AppError::Validation(_) => "validation_error",
             AppError::BadRequest(_) => "bad_request",
+            AppError::PayloadTooLarge => "payload_too_large",
             AppError::Unauthorized => "unauthorized",
             AppError::InvalidCredentials => "invalid_credentials",
             AppError::Forbidden(_) => "forbidden",

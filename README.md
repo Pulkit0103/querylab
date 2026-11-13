@@ -252,6 +252,50 @@ of SQL text. Use a role with only `SELECT` grants for defence in depth.
   output columns and memory. The raw JSON plan is one click away and can be
   copied.
 
+## Security and operations
+
+- **Response hardening:** every response carries the following headers.
+  `Strict-Transport-Security` is added when `COOKIE_SECURE` is on (HTTPS).
+  - `X-Content-Type-Options: nosniff`
+  - `X-Frame-Options: DENY`
+  - `Referrer-Policy: no-referrer`
+  - a deny-all `Content-Security-Policy`
+  - `Cache-Control: no-store`
+- **Request limits:**
+  - Bodies over 2 MiB get `413 payload_too_large`.
+  - SQL is capped at 1 MiB.
+  - Row limits and timeouts requested by clients are clamped to the server
+    maximums.
+  - Executions are limited per minute and per user, and so are concurrent
+    executions. The concurrency limit returns `429` with `Retry-After`.
+- **Structured logs:** set `LOG_FORMAT=json`; this is the default in
+  production. Each request produces one line with:
+  - method and path (never the query string or body)
+  - status and `latency_ms`
+  - `request_id` and `user_id`
+
+  5xx responses log at `error` level, so alert on `level=ERROR`.
+- **Error monitoring:**
+  - A handler panic becomes a JSON `500 internal_error` instead of a
+    dropped connection, and the panic message is logged.
+  - Internal error details are logged, never returned.
+  - Every response has an `X-Request-Id`. The UI shows it as a "reference"
+    on server errors, so a user report maps to one log line.
+- **Pool tuning:**
+  - The metadata pool keeps `DATABASE_MIN_CONNECTIONS` warm and recycles
+    connections after `DATABASE_MAX_LIFETIME_SECS`, which picks up
+    failovers.
+  - Target databases are never pooled. Each execution opens and closes its
+    own connection, so sessions and credentials of different users cannot
+    mix.
+- **Tests:**
+  - `backend/tests/security_api.rs` covers forged and tampered tokens,
+    session independence, racing registrations, payload validation, and
+    cross-user access to every connection endpoint.
+  - It also checks that credentials never appear in responses, and that the
+    concurrency and rate limits hold under parallel requests.
+  - Frontend component tests run with Testing Library in jsdom.
+
 ## Configuration (backend)
 
 | Variable                   | Default                  | Description |
@@ -262,6 +306,8 @@ of SQL text. Use a role with only `SELECT` grants for defence in depth.
 | `ENCRYPTION_PREVIOUS_KEYS` | —                        | `id:base64,...` keys accepted for decryption |
 | `RUN_MIGRATIONS`           | `true`                   | Apply migrations on startup |
 | `DATABASE_MAX_CONNECTIONS` / `DATABASE_MIN_CONNECTIONS` | `10` / `2` | Metadata pool size (min kept warm) |
+| `DATABASE_ACQUIRE_TIMEOUT_SECS` | `10`                | Wait for a free pool connection before failing |
+| `DATABASE_IDLE_TIMEOUT_SECS` / `DATABASE_MAX_LIFETIME_SECS` | `300` / `1800` | Close idle / recycle old metadata connections |
 | `APP_ENV`                  | `development`            | `production` enables JSON logs and strict checks |
 | `HOST` / `PORT`            | `0.0.0.0` / `8080`       | Bind address |
 | `CORS_ORIGINS`             | `http://localhost:3000`  | Comma-separated origins for direct API access |
