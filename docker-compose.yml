@@ -40,6 +40,24 @@ services:
       timeout: 3s
       retries: 10
 
+  # The API as it runs in production (release build, non-root, JSON logs).
+  api:
+    profiles: ["full"]
+    build: ./backend
+    depends_on:
+      metadata-db:
+        condition: service_healthy
+    environment:
+      DATABASE_URL: postgres://querylab:querylab@metadata-db:5432/querylab
+      # Development key and plain HTTP: run in development mode locally.
+      APP_ENV: development
+      LOG_FORMAT: json
+      ENCRYPTION_KEY: ngSxD0iS9jusyKYm69L1zh9617mM1Y9WJ8TeX3N0TrU=
+      COOKIE_SECURE: "false"
+      ALLOW_PRIVATE_NETWORKS: "true"
+    ports:
+      - "8080:8080"
+
 volumes:
   metadata-data:
   sample-data:
