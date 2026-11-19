@@ -35,6 +35,25 @@ properties:
 > transaction-mode poolers may not support. Keep `DATABASE_MAX_CONNECTIONS`
 > below your plan's connection limit.
 
+**With the Neon CLI:** the repository is linked through `neon.ts`. To set
+it up:
+
+1. Run `npm install` in the repository root.
+2. Run `neon login`, then `neon deploy`.
+
+`neon deploy` writes `DATABASE_URL` (the pooled URL) and
+`DATABASE_URL_UNPOOLED` (the direct URL) into `.env.local`, which git
+ignores. Use the **`DATABASE_URL_UNPOOLED`** value as the API's
+`DATABASE_URL`.
+
+The API logs `ignoring unrecognized connect parameter` for Neon's
+`channel_binding=require`. This is harmless: the connection is still
+TLS-only (`sslmode=require`) with SCRAM authentication.
+
+Some corporate networks block outbound port 5432. If the API reports
+`pool timed out` when started locally against Neon, use another network.
+Hosted platforms are not affected.
+
 ## 2. Encryption key
 
 Stored database passwords are encrypted with AES-256-GCM under this key.
