@@ -378,6 +378,13 @@ of SQL text. Use a role with only `SELECT` grants for defence in depth.
 | GET    | `/api/connections/{id}/tables/{table}/indexes?schema=` | Index definitions   |
 | GET    | `/api/connections/{id}/tables/{table}/relationships?schema=` | Incoming/outgoing FKs |
 | GET    | `/api/connections/{id}/catalog` | All tables + columns (autocomplete) |
+| GET    | `/api/connections/{id}/tables/{table}/constraints?schema=` | PK, FK, unique, check, exclusion with definitions |
+| GET    | `/api/connections/{id}/tables/{table}/ddl?schema=` | Generated CREATE TABLE / VIEW (+ indexes, triggers, comments) |
+| GET    | `/api/connections/{id}/functions?schema=` | Functions and procedures (extension-owned hidden) |
+| GET    | `/api/connections/{id}/functions/{oid}` | Function detail with `CREATE OR REPLACE` definition |
+| GET    | `/api/connections/{id}/triggers?schema=&table=` | Triggers with timing, events and definition |
+| GET    | `/api/connections/{id}/objects?schema=` | Sequences and user-defined types |
+| GET    | `/api/connections/{id}/search?q=` | Search tables, columns and functions |
 | POST   | `/api/query/execute`      | Execute one SQL statement                |
 | POST   | `/api/query/explain`      | EXPLAIN / EXPLAIN ANALYZE (JSON plan)    |
 | POST   | `/api/query/{execution_id}/cancel` | Cancel a running execution      |

@@ -244,6 +244,7 @@ export function EditorWorkspace() {
               const id = newTab({ title: table, sql: previewSql(schema, table) });
               void run(id, previewSql(schema, table));
             }}
+            onOpenSql={(title, sql) => newTab({ title, sql })}
           />
         ) : (
           !connectionsPending && <NoConnection compact />

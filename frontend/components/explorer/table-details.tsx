@@ -1,13 +1,14 @@
 "use client";
 
 import type { ReactNode } from "react";
-import { ArrowLeft, ArrowRight, Eye, KeyRound, Link2, ListTree, Play, Table2 } from "lucide-react";
+import { ArrowLeft, ArrowRight, Copy, Eye, FileCode2, KeyRound, Link2, ListTree, Play, ShieldCheck, Table2, Zap } from "lucide-react";
+import { toast } from "sonner";
 
 import { EmptyState } from "@/components/common/empty-state";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Skeleton } from "@/components/ui/skeleton";
-import { useColumns, useIndexes, useRelationships, useTables } from "@/hooks/use-schema";
+import { useColumns, useConstraints, useIndexes, useRelationships, useTableDdl, useTables, useTriggers } from "@/hooks/use-schema";
 import { formatBytes, formatNumber } from "@/lib/format";
 import type { ApiError } from "@/lib/api-client";
 
@@ -34,16 +35,55 @@ function ErrorText({ error }: { error: ApiError }) {
   return <p className="text-sm text-destructive">{error.message}</p>;
 }
 
+const CONSTRAINT_LABEL: Record<string, string> = {
+  primary_key: "primary key",
+  foreign_key: "foreign key",
+  unique: "unique",
+  check: "check",
+  exclusion: "exclusion",
+};
+
+/** Read-only SQL block with copy and open-in-editor actions. */
+export function SqlBlock({ sql, title, onOpenSql }: { sql: string; title: string; onOpenSql?: (title: string, sql: string) => void }) {
+  return (
+    <div className="overflow-hidden rounded-lg border">
+      <div className="flex items-center justify-end gap-1 border-b bg-panel px-2 py-1">
+        <Button
+          size="xs"
+          variant="ghost"
+          className="gap-1"
+          onClick={() =>
+            void navigator.clipboard.writeText(sql).then(
+              () => toast.success("Copied to clipboard"),
+              () => toast.error("Clipboard access was denied by the browser."),
+            )
+          }
+        >
+          <Copy className="size-3" /> Copy
+        </Button>
+        {onOpenSql && (
+          <Button size="xs" variant="ghost" className="gap-1" onClick={() => onOpenSql(title, sql)}>
+            <FileCode2 className="size-3" /> Open in editor
+          </Button>
+        )}
+      </div>
+      <pre className="max-h-96 overflow-auto p-3 font-mono text-[11px] leading-relaxed whitespace-pre scrollbar-thin">{sql}</pre>
+    </div>
+  );
+}
+
 export function TableDetails({
   connectionId,
   table,
   onPreview,
   onSelectTable,
+  onOpenSql,
 }: {
   connectionId: string | null;
   table: { schema: string; name: string } | null;
   onPreview?: (schema: string, table: string) => void;
   onSelectTable?: (schema: string, table: string) => void;
+  onOpenSql?: (title: string, sql: string) => void;
 }) {
   const schema = table?.schema ?? "";
   const name = table?.name ?? "";
@@ -52,6 +92,9 @@ export function TableDetails({
   const columns = useColumns(connectionId, schema, name, enabled);
   const indexes = useIndexes(connectionId, schema, name, enabled);
   const relationships = useRelationships(connectionId, schema, name, enabled);
+  const constraints = useConstraints(connectionId, schema, name, enabled);
+  const triggers = useTriggers(connectionId, schema, name, enabled);
+  const ddl = useTableDdl(connectionId, schema, name, enabled);
 
   if (!table) {
     return (
@@ -182,6 +225,60 @@ export function TableDetails({
           </section>
         )}
 
+        {!isView && (
+          <section>
+            <SectionTitle count={constraints.data?.length}>Constraints</SectionTitle>
+            {constraints.isPending ? (
+              <Loading />
+            ) : constraints.isError ? (
+              <ErrorText error={constraints.error} />
+            ) : constraints.data.length === 0 ? (
+              <p className="text-xs text-muted-foreground">No constraints besides NOT NULL.</p>
+            ) : (
+              <ul className="divide-y rounded-lg border">
+                {constraints.data.map((con) => (
+                  <li key={con.name} className="px-3 py-2 text-xs">
+                    <p className="flex items-center gap-2 font-mono font-medium">
+                      <ShieldCheck className="size-3.5 text-muted-foreground" />
+                      {con.name}
+                      <Badge variant="outline" className="text-[10px]">
+                        {CONSTRAINT_LABEL[con.kind] ?? con.kind}
+                      </Badge>
+                      {con.deferrable && <Badge variant="outline" className="text-[10px]">deferrable</Badge>}
+                    </p>
+                    <p className="mt-1 font-mono break-all text-muted-foreground">{con.definition}</p>
+                  </li>
+                ))}
+              </ul>
+            )}
+          </section>
+        )}
+
+        {(triggers.data?.length ?? 0) > 0 && (
+          <section>
+            <SectionTitle count={triggers.data?.length}>Triggers</SectionTitle>
+            <ul className="divide-y rounded-lg border">
+              {triggers.data!.map((t) => (
+                <li key={t.name} className="px-3 py-2 text-xs" title={t.definition}>
+                  <p className="flex flex-wrap items-center gap-2 font-mono font-medium">
+                    <Zap className="size-3.5 text-warning" />
+                    {t.name}
+                    <span className="font-sans font-normal text-muted-foreground">
+                      {t.timing} {t.events.join(" OR ")} · for each {t.level.toLowerCase()}
+                    </span>
+                    {t.enabled !== "enabled" && (
+                      <Badge variant="outline" className="text-[10px] text-warning">
+                        {t.enabled}
+                      </Badge>
+                    )}
+                  </p>
+                  <p className="mt-1 font-mono text-muted-foreground">executes {t.function}()</p>
+                </li>
+              ))}
+            </ul>
+          </section>
+        )}
+
         <section>
           <SectionTitle count={relationships.data?.length}>Relationships</SectionTitle>
           {relationships.isPending ? (
@@ -220,6 +317,17 @@ export function TableDetails({
                 );
               })}
             </ul>
+          )}
+        </section>
+
+        <section>
+          <SectionTitle>DDL</SectionTitle>
+          {ddl.isPending ? (
+            <Loading />
+          ) : ddl.isError ? (
+            <ErrorText error={ddl.error} />
+          ) : (
+            <SqlBlock sql={ddl.data.ddl} title={`${name}.sql`} onOpenSql={onOpenSql} />
           )}
         </section>
       </div>

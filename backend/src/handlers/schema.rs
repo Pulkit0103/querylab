@@ -4,8 +4,9 @@ use uuid::Uuid;
 use crate::{
     errors::AppResult,
     models::schema::{
-        validate_identifier, CatalogEntry, ColumnInfo, IndexInfo, Relationship, SchemaInfo,
-        SchemaQuery, TableInfo, TablesQuery,
+        validate_identifier, CatalogEntry, ColumnInfo, ConstraintInfo, FunctionDetail,
+        FunctionInfo, IndexInfo, Relationship, SchemaInfo, SchemaObjects, SchemaQuery, SearchHit,
+        SearchQuery, TableDdl, TableInfo, TablesQuery, TriggerInfo, TriggersQuery,
     },
     services::{auth::AuthUser, schema::SchemaService},
     state::AppState,
@@ -92,5 +93,106 @@ pub async fn catalog(
 ) -> AppResult<Json<Vec<CatalogEntry>>> {
     Ok(Json(
         SchemaService::new(&state).catalog(user.user_id, id).await?,
+    ))
+}
+
+pub async fn constraints(
+    State(state): State<AppState>,
+    user: AuthUser,
+    ApiPath((id, table)): ApiPath<(Uuid, String)>,
+    ApiQuery(query): ApiQuery<SchemaQuery>,
+) -> AppResult<Json<Vec<ConstraintInfo>>> {
+    check_table(&query, &table)?;
+    Ok(Json(
+        SchemaService::new(&state)
+            .constraints(user.user_id, id, &query.schema, &table)
+            .await?,
+    ))
+}
+
+pub async fn ddl(
+    State(state): State<AppState>,
+    user: AuthUser,
+    ApiPath((id, table)): ApiPath<(Uuid, String)>,
+    ApiQuery(query): ApiQuery<SchemaQuery>,
+) -> AppResult<Json<TableDdl>> {
+    check_table(&query, &table)?;
+    Ok(Json(
+        SchemaService::new(&state)
+            .ddl(user.user_id, id, &query.schema, &table)
+            .await?,
+    ))
+}
+
+pub async fn functions(
+    State(state): State<AppState>,
+    user: AuthUser,
+    ApiPath(id): ApiPath<Uuid>,
+    ApiQuery(query): ApiQuery<TablesQuery>,
+) -> AppResult<Json<Vec<FunctionInfo>>> {
+    query.validate()?;
+    Ok(Json(
+        SchemaService::new(&state)
+            .functions(user.user_id, id, query.schema.as_deref())
+            .await?,
+    ))
+}
+
+pub async fn function(
+    State(state): State<AppState>,
+    user: AuthUser,
+    ApiPath((id, oid)): ApiPath<(Uuid, i64)>,
+) -> AppResult<Json<FunctionDetail>> {
+    Ok(Json(
+        SchemaService::new(&state)
+            .function(user.user_id, id, oid)
+            .await?,
+    ))
+}
+
+pub async fn triggers(
+    State(state): State<AppState>,
+    user: AuthUser,
+    ApiPath(id): ApiPath<Uuid>,
+    ApiQuery(query): ApiQuery<TriggersQuery>,
+) -> AppResult<Json<Vec<TriggerInfo>>> {
+    query.validate()?;
+    Ok(Json(
+        SchemaService::new(&state)
+            .triggers(
+                user.user_id,
+                id,
+                query.schema.as_deref(),
+                query.table.as_deref(),
+            )
+            .await?,
+    ))
+}
+
+pub async fn objects(
+    State(state): State<AppState>,
+    user: AuthUser,
+    ApiPath(id): ApiPath<Uuid>,
+    ApiQuery(query): ApiQuery<TablesQuery>,
+) -> AppResult<Json<SchemaObjects>> {
+    query.validate()?;
+    Ok(Json(
+        SchemaService::new(&state)
+            .objects(user.user_id, id, query.schema.as_deref())
+            .await?,
+    ))
+}
+
+pub async fn search(
+    State(state): State<AppState>,
+    user: AuthUser,
+    ApiPath(id): ApiPath<Uuid>,
+    ApiQuery(query): ApiQuery<SearchQuery>,
+) -> AppResult<Json<Vec<SearchHit>>> {
+    query.validate()?;
+    Ok(Json(
+        SchemaService::new(&state)
+            .search(user.user_id, id, query.q.trim())
+            .await?,
     ))
 }
