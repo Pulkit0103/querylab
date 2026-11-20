@@ -1,24 +1,29 @@
-//! Business logic for user-owned database connections.
+//! Business logic for user-owned database connections and their groups.
 
 use sqlx::PgPool;
 use uuid::Uuid;
 use zeroize::Zeroizing;
 
 use crate::{
+    config::Config,
     database::connections::{self as repo, NewConnection},
     errors::{AppError, AppResult},
     models::connection::{
-        ConnectionRecord, ConnectionResponse, ConnectionSecret, CreateConnectionRequest,
-        UpdateConnectionRequest,
+        ConnectionGroup, ConnectionGroupRequest, ConnectionRecord, ConnectionResponse,
+        ConnectionSecret, ConnectionStatus, CreateConnectionRequest, UpdateConnectionRequest,
     },
+    services::target_db::{self, ConnectionTestResult, TargetSpec},
     state::AppState,
     utils::{crypto::CredentialCipher, network},
 };
 
+/// Stored error messages are truncated to this many characters.
+const MAX_STATUS_ERROR_CHARS: usize = 500;
+
 pub struct ConnectionService<'a> {
     db: &'a PgPool,
     cipher: &'a CredentialCipher,
-    allow_private_networks: bool,
+    config: &'a Config,
 }
 
 /// Associated data binding a ciphertext to its owner and row.
@@ -26,12 +31,20 @@ fn credentials_aad(user_id: Uuid, connection_id: Uuid) -> Vec<u8> {
     format!("querylab/connection/v1/{user_id}/{connection_id}").into_bytes()
 }
 
+fn normalise_color(color: Option<&str>) -> Option<String> {
+    color.map(|c| c.to_ascii_lowercase())
+}
+
+fn normalise_pem(pem: Option<&str>) -> Option<String> {
+    pem.map(|p| format!("{}\n", p.trim()))
+}
+
 impl<'a> ConnectionService<'a> {
     pub fn new(state: &'a AppState) -> Self {
         Self {
             db: &state.db,
             cipher: &state.cipher,
-            allow_private_networks: state.config.allow_private_networks,
+            config: &state.config,
         }
     }
 
@@ -87,9 +100,15 @@ impl<'a> ConnectionService<'a> {
         user_id: Uuid,
         req: &CreateConnectionRequest,
     ) -> AppResult<ConnectionResponse> {
-        network::precheck(req.host.trim(), req.port, self.allow_private_networks)?;
+        network::precheck(
+            req.host.trim(),
+            req.port,
+            self.config.allow_private_networks,
+        )?;
         let id = Uuid::new_v4();
         let encrypted = self.encrypt_secret(user_id, id, &req.password)?;
+        let color = normalise_color(req.color.as_deref());
+        let pem = normalise_pem(req.ssl_root_cert.as_deref());
         let record = repo::insert(
             self.db,
             &NewConnection {
@@ -103,10 +122,14 @@ impl<'a> ConnectionService<'a> {
                 ssl_mode: req.ssl_mode.as_str(),
                 read_only: req.read_only,
                 encrypted_credentials: &encrypted,
+                environment: req.environment.as_str(),
+                group_id: req.group_id,
+                color: color.as_deref(),
+                ssl_root_cert: pem.as_deref(),
             },
         )
         .await
-        .map_err(conflict_as_name_taken)?;
+        .map_err(write_error)?;
         tracing::info!(connection_id = %record.id, %user_id, "connection created");
         Ok(ConnectionResponse::from(&record))
     }
@@ -129,11 +152,29 @@ impl<'a> ConnectionService<'a> {
         };
         let name = req.name.as_deref().map(str::trim).unwrap_or(&existing.name);
         let host = req.host.as_deref().map(str::trim).unwrap_or(&existing.host);
-        network::precheck(
-            host,
-            req.port.unwrap_or(existing.port()),
-            self.allow_private_networks,
-        )?;
+        let port = req.port.unwrap_or(existing.port());
+        let database_name = req.database.as_deref().unwrap_or(&existing.database_name);
+        let username = req.username.as_deref().unwrap_or(&existing.username);
+        let ssl_mode = req.ssl_mode.unwrap_or(existing.ssl_mode());
+        let color = match &req.color {
+            Some(c) => normalise_color(c.as_deref()),
+            None => existing.color.clone(),
+        };
+        let pem = match &req.ssl_root_cert {
+            Some(p) => normalise_pem(p.as_deref()),
+            None => existing.ssl_root_cert.clone(),
+        };
+        network::precheck(host, port, self.config.allow_private_networks)?;
+
+        // The last test result no longer applies once the target changes.
+        let reset_status = host != existing.host
+            || port != existing.port()
+            || database_name != existing.database_name
+            || username != existing.username
+            || req.password.is_some()
+            || ssl_mode != existing.ssl_mode()
+            || pem != existing.ssl_root_cert;
+
         let record = repo::update(
             self.db,
             &NewConnection {
@@ -141,21 +182,75 @@ impl<'a> ConnectionService<'a> {
                 user_id,
                 name,
                 host,
-                port: req.port.unwrap_or(existing.port()),
-                database_name: req.database.as_deref().unwrap_or(&existing.database_name),
-                username: req.username.as_deref().unwrap_or(&existing.username),
-                ssl_mode: req
-                    .ssl_mode
-                    .map(|m| m.as_str())
-                    .unwrap_or(existing.ssl_mode().as_str()),
+                port,
+                database_name,
+                username,
+                ssl_mode: ssl_mode.as_str(),
                 read_only: req.read_only.unwrap_or(existing.read_only),
                 encrypted_credentials: &encrypted,
+                environment: req.environment.unwrap_or(existing.environment()).as_str(),
+                group_id: req.group_id.unwrap_or(existing.group_id),
+                color: color.as_deref(),
+                ssl_root_cert: pem.as_deref(),
+            },
+            reset_status,
+        )
+        .await
+        .map_err(write_error)?
+        .ok_or(AppError::NotFound("connection"))?;
+        Ok(ConnectionResponse::from(&record))
+    }
+
+    /// Copies a connection, including its credentials, under a free
+    /// "<name> (copy)" name. The secret is re-encrypted because the
+    /// ciphertext is bound to the connection id.
+    pub async fn duplicate(&self, user_id: Uuid, id: Uuid) -> AppResult<ConnectionResponse> {
+        let source = self.get_record(user_id, id).await?;
+        let secret = self.decrypt_secret(&source)?;
+        let name = self.free_copy_name(user_id, &source.name).await?;
+        let new_id = Uuid::new_v4();
+        let encrypted = self.encrypt_secret(user_id, new_id, &secret.password)?;
+        let record = repo::insert(
+            self.db,
+            &NewConnection {
+                id: new_id,
+                user_id,
+                name: &name,
+                host: &source.host,
+                port: source.port(),
+                database_name: &source.database_name,
+                username: &source.username,
+                ssl_mode: &source.ssl_mode,
+                read_only: source.read_only,
+                encrypted_credentials: &encrypted,
+                environment: &source.environment,
+                group_id: source.group_id,
+                color: source.color.as_deref(),
+                ssl_root_cert: source.ssl_root_cert.as_deref(),
             },
         )
         .await
-        .map_err(conflict_as_name_taken)?
-        .ok_or(AppError::NotFound("connection"))?;
+        .map_err(write_error)?;
+        tracing::info!(connection_id = %record.id, source_id = %id, %user_id, "connection duplicated");
         Ok(ConnectionResponse::from(&record))
+    }
+
+    async fn free_copy_name(&self, user_id: Uuid, base: &str) -> AppResult<String> {
+        // Leave room for the suffix within the 100-character limit.
+        let stem: String = base.chars().take(85).collect();
+        for n in 1..=50 {
+            let candidate = if n == 1 {
+                format!("{stem} (copy)")
+            } else {
+                format!("{stem} (copy {n})")
+            };
+            if !repo::name_exists(self.db, user_id, &candidate).await? {
+                return Ok(candidate);
+            }
+        }
+        Err(AppError::Conflict(
+            "too many copies of this connection; rename some first".into(),
+        ))
     }
 
     pub async fn delete(&self, user_id: Uuid, id: Uuid) -> AppResult<()> {
@@ -167,17 +262,111 @@ impl<'a> ConnectionService<'a> {
         }
     }
 
-    pub async fn mark_connected(&self, user_id: Uuid, id: Uuid) -> AppResult<()> {
-        repo::touch_last_connected(self.db, user_id, id).await?;
-        Ok(())
+    /// Tests a saved connection and records the outcome as its status. A
+    /// failed test is still recorded before the error is returned.
+    pub async fn test_saved(&self, user_id: Uuid, id: Uuid) -> AppResult<ConnectionTestResult> {
+        let record = self.get_record(user_id, id).await?;
+        let secret = self.decrypt_secret(&record)?;
+        let outcome =
+            target_db::test_connection(self.config, &TargetSpec::from_record(&record, &secret))
+                .await;
+        match outcome {
+            Ok(result) => {
+                let latency = i32::try_from(result.latency_ms).unwrap_or(i32::MAX);
+                repo::record_status(
+                    self.db,
+                    user_id,
+                    id,
+                    ConnectionStatus::Online.as_str(),
+                    Some(latency),
+                    None,
+                )
+                .await?;
+                Ok(result)
+            }
+            Err(failure) => {
+                let message: String = failure
+                    .error
+                    .to_string()
+                    .chars()
+                    .take(MAX_STATUS_ERROR_CHARS)
+                    .collect();
+                repo::record_status(
+                    self.db,
+                    user_id,
+                    id,
+                    failure.status.as_str(),
+                    None,
+                    Some(&message),
+                )
+                .await?;
+                Err(*failure.error)
+            }
+        }
+    }
+
+    // -- groups -----------------------------------------------------------
+
+    pub async fn groups(&self, user_id: Uuid) -> AppResult<Vec<ConnectionGroup>> {
+        Ok(repo::list_groups(self.db, user_id).await?)
+    }
+
+    pub async fn create_group(
+        &self,
+        user_id: Uuid,
+        req: &ConnectionGroupRequest,
+    ) -> AppResult<ConnectionGroup> {
+        let position = match req.position {
+            Some(p) => p,
+            None => repo::next_group_position(self.db, user_id).await?,
+        };
+        repo::insert_group(self.db, user_id, req.name.trim(), position)
+            .await
+            .map_err(group_write_error)
+    }
+
+    pub async fn update_group(
+        &self,
+        user_id: Uuid,
+        id: Uuid,
+        req: &ConnectionGroupRequest,
+    ) -> AppResult<ConnectionGroup> {
+        repo::update_group(self.db, user_id, id, req.name.trim(), req.position)
+            .await
+            .map_err(group_write_error)?
+            .ok_or(AppError::NotFound("connection group"))
+    }
+
+    /// Deletes a group; its connections become ungrouped.
+    pub async fn delete_group(&self, user_id: Uuid, id: Uuid) -> AppResult<()> {
+        if repo::delete_group(self.db, user_id, id).await? {
+            Ok(())
+        } else {
+            Err(AppError::NotFound("connection group"))
+        }
     }
 }
 
-fn conflict_as_name_taken(err: sqlx::Error) -> AppError {
-    match AppError::from(err) {
-        AppError::Conflict(_) => {
-            AppError::Conflict("a connection with this name already exists".into())
-        }
-        other => other,
+/// Unique-name conflicts get a specific message; a foreign key violation
+/// means the group does not exist for this user and is reported as 404.
+fn write_error(err: sqlx::Error) -> AppError {
+    match sqlstate(&err).as_deref() {
+        Some("23505") => AppError::Conflict("a connection with this name already exists".into()),
+        Some("23503") => AppError::NotFound("connection group"),
+        _ => AppError::from(err),
+    }
+}
+
+fn group_write_error(err: sqlx::Error) -> AppError {
+    match sqlstate(&err).as_deref() {
+        Some("23505") => AppError::Conflict("a group with this name already exists".into()),
+        _ => AppError::from(err),
+    }
+}
+
+fn sqlstate(err: &sqlx::Error) -> Option<String> {
+    match err {
+        sqlx::Error::Database(db) => db.code().map(|c| c.into_owned()),
+        _ => None,
     }
 }

@@ -1,7 +1,7 @@
 "use client";
 
 import { useState, type FormEvent } from "react";
-import { AlertTriangle, CheckCircle2, ClipboardPaste, Loader2, PlugZap, ShieldCheck, XCircle } from "lucide-react";
+import { AlertTriangle, Check, CheckCircle2, ClipboardPaste, Loader2, PlugZap, ShieldCheck, XCircle } from "lucide-react";
 import { toast } from "sonner";
 
 import { Button } from "@/components/ui/button";
@@ -10,7 +10,9 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Switch } from "@/components/ui/switch";
+import { Textarea } from "@/components/ui/textarea";
 import {
+  useConnectionGroups,
   useCreateConnection,
   useTestDraftConnection,
   useTestSavedConnection,
@@ -18,11 +20,12 @@ import {
   type ConnectionTestResult,
 } from "@/hooks/use-connections";
 import { ApiError } from "@/lib/api-client";
+import { CONNECTION_COLORS, ENVIRONMENTS, looksLikePemBundle } from "@/lib/connection-meta";
 import { parseConnectionString } from "@/lib/connection-string";
 import { formatDuration } from "@/lib/format";
 import { cn } from "@/lib/utils";
 import { useWorkspaceStore } from "@/stores/workspace-store";
-import type { Connection, ConnectionInput, FieldError, SslMode } from "@/types/api";
+import type { Connection, ConnectionInput, Environment, FieldError, SslMode } from "@/types/api";
 
 const SSL_OPTIONS: { value: SslMode; label: string }[] = [
   { value: "disable", label: "Disable" },
@@ -32,7 +35,15 @@ const SSL_OPTIONS: { value: SslMode; label: string }[] = [
   { value: "verify-full", label: "Verify full" },
 ];
 
-type FormState = Omit<ConnectionInput, "port" | "password"> & { port: string; password: string };
+const NO_GROUP = "__none";
+
+type FormState = Omit<ConnectionInput, "port" | "password" | "group_id" | "color" | "ssl_root_cert"> & {
+  port: string;
+  password: string;
+  group_id: string;
+  color: string | null;
+  ssl_root_cert: string;
+};
 
 function initialState(c: Connection | null): FormState {
   return {
@@ -44,10 +55,15 @@ function initialState(c: Connection | null): FormState {
     password: "",
     ssl_mode: c?.ssl_mode ?? "require",
     read_only: c?.read_only ?? true,
+    environment: c?.environment ?? "development",
+    group_id: c?.group_id ?? NO_GROUP,
+    color: c?.color ?? null,
+    ssl_root_cert: c?.ssl_root_cert ?? "",
   };
 }
 
 function toInput(f: FormState, includePassword: boolean): ConnectionInput {
+  const pem = f.ssl_root_cert.trim();
   return {
     name: f.name.trim(),
     host: f.host.trim(),
@@ -57,6 +73,10 @@ function toInput(f: FormState, includePassword: boolean): ConnectionInput {
     ...(includePassword ? { password: f.password } : {}),
     ssl_mode: f.ssl_mode,
     read_only: f.read_only,
+    environment: f.environment,
+    group_id: f.group_id === NO_GROUP ? null : f.group_id,
+    color: f.color,
+    ssl_root_cert: pem ? pem : null,
   };
 }
 
@@ -120,6 +140,7 @@ function ConnectionForm({ editing, onDone }: { editing: Connection | null; onDon
   const update = useUpdateConnection();
   const testDraft = useTestDraftConnection();
   const testSaved = useTestSavedConnection();
+  const { data: groups = [] } = useConnectionGroups();
   const save = editing ? update : create;
   const errors = fieldErrors(save.error ?? testDraft.error);
 
@@ -129,7 +150,7 @@ function ConnectionForm({ editing, onDone }: { editing: Connection | null; onDon
   };
 
   const original = initialState(editing);
-  const targetChanged = (["host", "port", "database", "username", "ssl_mode", "read_only"] as const).some(
+  const targetChanged = (["host", "port", "database", "username", "ssl_mode", "read_only", "ssl_root_cert"] as const).some(
     (k) => form[k] !== original[k],
   );
 
@@ -267,6 +288,123 @@ function ConnectionForm({ editing, onDone }: { editing: Connection | null; onDon
           Read-write mode lets queries modify data. Database permissions remain the final safeguard.
         </p>
       )}
+
+      {(form.ssl_mode === "verify-ca" || form.ssl_mode === "verify-full" || form.ssl_root_cert) && (
+        <div className="space-y-1.5">
+          <Label htmlFor="conn-ca" className="text-xs">
+            CA certificate (PEM)
+            <span className="ml-1 font-normal text-muted-foreground">optional · used to verify the server</span>
+          </Label>
+          <Textarea
+            id="conn-ca"
+            value={form.ssl_root_cert}
+            onChange={(e) => set("ssl_root_cert", e.target.value)}
+            placeholder={"-----BEGIN CERTIFICATE-----\n…\n-----END CERTIFICATE-----"}
+            className="h-24 font-mono text-[11px]"
+            spellCheck={false}
+            aria-invalid={!!errors.ssl_root_cert || (!!form.ssl_root_cert.trim() && !looksLikePemBundle(form.ssl_root_cert))}
+          />
+          {errors.ssl_root_cert ? (
+            <p className="text-xs text-destructive">{errors.ssl_root_cert}</p>
+          ) : (
+            form.ssl_root_cert.trim() &&
+            !looksLikePemBundle(form.ssl_root_cert) && (
+              <p className="text-xs text-destructive">Paste one or more complete PEM certificates.</p>
+            )
+          )}
+        </div>
+      )}
+
+      <div className="grid grid-cols-2 gap-3">
+        <div className="space-y-1.5">
+          <Label htmlFor="conn-env" className="text-xs">
+            Environment
+          </Label>
+          <Select
+            items={ENVIRONMENTS.map((e) => ({ value: e.value, label: e.label }))}
+            value={form.environment}
+            onValueChange={(v) => v && set("environment", v as Environment)}
+          >
+            <SelectTrigger id="conn-env" className="w-full">
+              <SelectValue />
+            </SelectTrigger>
+            <SelectContent>
+              {ENVIRONMENTS.map((e) => (
+                <SelectItem key={e.value} value={e.value}>
+                  {e.label}
+                </SelectItem>
+              ))}
+            </SelectContent>
+          </Select>
+        </div>
+        <div className="space-y-1.5">
+          <Label htmlFor="conn-group" className="text-xs">
+            Group
+          </Label>
+          <Select
+            items={[{ value: NO_GROUP, label: "No group" }, ...groups.map((g) => ({ value: g.id, label: g.name }))]}
+            value={form.group_id}
+            onValueChange={(v) => v && set("group_id", String(v))}
+          >
+            <SelectTrigger id="conn-group" className="w-full">
+              {/* Resolve the label from live data: groups may load after the dialog opens. */}
+              <SelectValue>
+                {(value: string) => groups.find((g) => g.id === value)?.name ?? "No group"}
+              </SelectValue>
+            </SelectTrigger>
+            <SelectContent>
+              <SelectItem value={NO_GROUP}>No group</SelectItem>
+              {groups.map((g) => (
+                <SelectItem key={g.id} value={g.id}>
+                  {g.name}
+                </SelectItem>
+              ))}
+            </SelectContent>
+          </Select>
+        </div>
+      </div>
+      {form.environment === "production" && (
+        <p className="flex gap-1.5 text-xs text-destructive">
+          <AlertTriangle className="mt-0.5 size-3 shrink-0" />
+          Production connections are highlighted everywhere they are active.
+        </p>
+      )}
+
+      <div className="space-y-1.5">
+        <span className="text-xs font-medium">Colour label</span>
+        <div className="flex flex-wrap items-center gap-1.5" role="radiogroup" aria-label="Colour label">
+          <button
+            type="button"
+            role="radio"
+            aria-checked={form.color === null}
+            aria-label="No colour"
+            onClick={() => set("color", null)}
+            className={cn(
+              "grid size-6 place-items-center rounded-full border text-[10px] text-muted-foreground",
+              form.color === null && "ring-2 ring-ring ring-offset-1 ring-offset-background",
+            )}
+          >
+            ∅
+          </button>
+          {CONNECTION_COLORS.map((color) => (
+            <button
+              key={color}
+              type="button"
+              role="radio"
+              aria-checked={form.color === color}
+              aria-label={`Colour ${color}`}
+              onClick={() => set("color", color)}
+              className={cn(
+                "grid size-6 place-items-center rounded-full",
+                form.color === color && "ring-2 ring-ring ring-offset-1 ring-offset-background",
+              )}
+              style={{ background: color }}
+            >
+              {form.color === color && <Check className="size-3.5 text-white" />}
+            </button>
+          ))}
+        </div>
+      </div>
 
       <TestResult state={test} />
       {generalError && (

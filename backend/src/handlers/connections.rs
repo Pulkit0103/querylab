@@ -3,7 +3,10 @@ use uuid::Uuid;
 
 use crate::{
     errors::AppResult,
-    models::connection::{ConnectionResponse, CreateConnectionRequest, UpdateConnectionRequest},
+    models::connection::{
+        ConnectionGroup, ConnectionGroupRequest, ConnectionResponse, CreateConnectionRequest,
+        UpdateConnectionRequest,
+    },
     services::{
         auth::AuthUser,
         connections::ConnectionService,
@@ -82,14 +85,68 @@ pub async fn test_saved(
     ApiPath(id): ApiPath<Uuid>,
 ) -> AppResult<Json<ConnectionTestResult>> {
     state.connect_limiter.check(&user.user_id.to_string())?;
-    let service = ConnectionService::new(&state);
-    let record = service.get_record(user.user_id, id).await?;
-    let secret = service.decrypt_secret(&record)?;
-    let result =
-        target_db::test_connection(&state.config, &TargetSpec::from_record(&record, &secret))
-            .await?;
-    service.mark_connected(user.user_id, id).await?;
+    let result = ConnectionService::new(&state)
+        .test_saved(user.user_id, id)
+        .await?;
     Ok(Json(result))
+}
+
+/// Copies a connection (credentials included) under a new name.
+pub async fn duplicate(
+    State(state): State<AppState>,
+    user: AuthUser,
+    ApiPath(id): ApiPath<Uuid>,
+) -> AppResult<(StatusCode, Json<ConnectionResponse>)> {
+    let copy = ConnectionService::new(&state)
+        .duplicate(user.user_id, id)
+        .await?;
+    Ok((StatusCode::CREATED, Json(copy)))
+}
+
+// -- groups ---------------------------------------------------------------
+
+pub async fn list_groups(
+    State(state): State<AppState>,
+    user: AuthUser,
+) -> AppResult<Json<Vec<ConnectionGroup>>> {
+    Ok(Json(
+        ConnectionService::new(&state).groups(user.user_id).await?,
+    ))
+}
+
+pub async fn create_group(
+    State(state): State<AppState>,
+    user: AuthUser,
+    ValidatedJson(req): ValidatedJson<ConnectionGroupRequest>,
+) -> AppResult<(StatusCode, Json<ConnectionGroup>)> {
+    let group = ConnectionService::new(&state)
+        .create_group(user.user_id, &req)
+        .await?;
+    Ok((StatusCode::CREATED, Json(group)))
+}
+
+pub async fn update_group(
+    State(state): State<AppState>,
+    user: AuthUser,
+    ApiPath(id): ApiPath<Uuid>,
+    ValidatedJson(req): ValidatedJson<ConnectionGroupRequest>,
+) -> AppResult<Json<ConnectionGroup>> {
+    Ok(Json(
+        ConnectionService::new(&state)
+            .update_group(user.user_id, id, &req)
+            .await?,
+    ))
+}
+
+pub async fn delete_group(
+    State(state): State<AppState>,
+    user: AuthUser,
+    ApiPath(id): ApiPath<Uuid>,
+) -> AppResult<StatusCode> {
+    ConnectionService::new(&state)
+        .delete_group(user.user_id, id)
+        .await?;
+    Ok(StatusCode::NO_CONTENT)
 }
 
 pub async fn delete(

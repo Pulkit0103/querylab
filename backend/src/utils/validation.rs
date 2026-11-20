@@ -4,9 +4,20 @@ use axum::{
     extract::{rejection::JsonRejection, FromRequest, Request},
     Json,
 };
-use serde::de::DeserializeOwned;
+use serde::{de::DeserializeOwned, Deserialize};
 
 use crate::errors::{AppError, FieldError};
+
+/// For partial updates of nullable fields: an absent field deserialises to
+/// `None` (keep), an explicit `null` to `Some(None)` (clear). Use with
+/// `#[serde(default, deserialize_with = "double_option")]`.
+pub fn double_option<'de, T, D>(de: D) -> Result<Option<Option<T>>, D::Error>
+where
+    T: Deserialize<'de>,
+    D: serde::Deserializer<'de>,
+{
+    Option::<T>::deserialize(de).map(Some)
+}
 
 /// Implemented by request DTOs that need semantic validation after parsing.
 pub trait Validate {

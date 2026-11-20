@@ -198,19 +198,21 @@ for the tab context menu.
 
 ## Phase 2 — Database Connection Manager
 
-**Goal:** manage many PostgreSQL databases from one place.
+**Goal:** manage many PostgreSQL databases from one place. **Status:** ✅ delivered.
+
+> **Implementation note:** CA certificates are public data, so they are stored in a plain ssl_root_cert column rather than inside the encrypted credential blob. This keeps partial updates simple and does not weaken credential protection.
 
 | Feature | Status | Notes |
 | --- | --- | --- |
 | PostgreSQL connections, multiple per user | ✅ | |
 | Connection testing | ✅ | Draft and saved tests, server facts, warnings |
-| SSL configuration | ◐ | Modes exist. **Add:** custom CA certificate for `verify-ca`/`verify-full`, and client certificates (optional). |
+| SSL configuration | ✅ | Modes plus a custom CA bundle (PEM) for `verify-ca`/`verify-full`. Client certificates remain optional future work. |
 | Secure credential storage | ✅ | AES-GCM with AAD bound to the user and connection; key rotation |
-| Connection grouping | ☐ | User-defined groups (folders) |
-| Dev, Staging and Production environments | ☐ | Environment tag plus guardrails (principle 4) |
-| Connection status indicator | ◐ | Last-connected timestamp exists. **Add:** live status (`online`, `unreachable`, `auth failed`, `unknown`) with last check time and latency. |
-| Reconnect | ☐ | Re-test and refresh status; clear cached schema |
-| Duplicate connection, colour label | ☐ | Small conveniences |
+| Connection grouping | ✅ | User-defined groups with drag and drop, move-to menu, rename and delete |
+| Dev, Staging and Production environments | ✅ | Environment tag, badges, environment filter and a persistent banner for staging and production. Typed confirmation arrives with the first privileged operation (Phase 4). |
+| Connection status indicator | ✅ | Server-recorded `online`, `unreachable`, `auth_failed`, `tls_error` or `error`, with time, latency and error. Cleared when the target changes. |
+| Reconnect | ✅ | Re-tests the connection and drops cached schema metadata |
+| Duplicate connection, colour label | ✅ | Credentials are re-encrypted under the copy's id |
 
 **Frontend tasks**
 - Connections page: list grouped by group and environment, filtering,

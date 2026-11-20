@@ -28,9 +28,13 @@ export class ApiError extends Error {
   }
 }
 
-/** Server faults include a reference users can quote when reporting them. */
-export function errorMessageFor(status: number, message: string, requestId: string | null): string {
-  return status >= 500 && requestId ? `${message} (reference ${requestId})` : message;
+/**
+ * Server faults include a reference users can quote when reporting them.
+ * `connection_error` (502) describes the user's own database (wrong
+ * password, host down) and is not a QueryLab fault, so it gets none.
+ */
+export function errorMessageFor(status: number, message: string, requestId: string | null, code?: string): string {
+  return status >= 500 && requestId && code !== "connection_error" ? `${message} (reference ${requestId})` : message;
 }
 
 type Method = "GET" | "POST" | "PUT" | "DELETE";
@@ -92,7 +96,7 @@ async function request<T>(method: Method, path: string, opts: RequestOptions = {
     throw new ApiError(
       res.status,
       body?.error?.code ?? "http_error",
-      errorMessageFor(res.status, body?.error?.message ?? `Request failed with status ${res.status}`, requestId),
+      errorMessageFor(res.status, body?.error?.message ?? `Request failed with status ${res.status}`, requestId, body?.error?.code),
       body?.error?.details,
       requestId ?? undefined,
     );
