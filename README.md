@@ -18,6 +18,7 @@ querylab/
 ├── backend/           Rust Axum API (deploys to Railway / Render)
 ├── scripts/sample-db/ Seed data for the local sample target database
 ├── docs/              Deployment guide
+├── PROJECT_PLAN.md    Product roadmap (10 phases, 3 releases)
 ├── render.yaml        Render Blueprint for the API
 └── docker-compose.yml Local PostgreSQL services (+ API image with --profile full)
 ```
@@ -381,6 +382,20 @@ Schema metadata is read from `pg_catalog` with fully parameterised queries
 read-only connection with a statement timeout. `?schema=` defaults to `public`.
 
 All endpoints except health, version, register and login require a session.
+
+## Roadmap
+
+[PROJECT_PLAN.md](PROJECT_PLAN.md) describes the next stage of the
+platform. Each phase lists:
+
+- what already exists and what remains
+- frontend and backend tasks
+- API endpoints
+- metadata schema changes
+- dependencies on other phases
+- acceptance criteria and tests
+
+Phases are implemented one at a time, after their plan is reviewed.
 
 ## Deployment
 
