@@ -7,6 +7,7 @@ import {
   Clock,
   History,
   Loader2,
+  Pin,
   Play,
   Search,
   SquareArrowOutUpRight,
@@ -18,6 +19,7 @@ import {
 import { toast } from "sonner";
 
 import { EmptyState } from "@/components/common/empty-state";
+import { PinButton } from "@/components/library/pin-button";
 import { PageContainer } from "@/components/common/page-container";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -27,10 +29,18 @@ import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip
 import { useClearHistory, useDeleteHistory, useHistory } from "@/hooks/use-library";
 import { useQueryRunner } from "@/hooks/use-query-runner";
 import { formatDuration, formatNumber, formatRelativeTime } from "@/lib/format";
+import {
+  DURATION_PRESETS,
+  emptyHistoryFilters,
+  historyQuery,
+  isFiltered,
+  type DurationPreset,
+  type HistoryFilterState,
+} from "@/lib/library";
 import { cn } from "@/lib/utils";
 import { useEditorStore } from "@/stores/editor-store";
 import { useWorkspaceStore } from "@/stores/workspace-store";
-import type { HistoryEntry, HistoryStatus } from "@/types/library";
+import type { HistoryEntry, HistoryKind, HistoryStatus } from "@/types/library";
 
 const STATUS_META: Record<HistoryStatus, { label: string; icon: typeof CheckCircle2; className: string }> = {
   success: { label: "Success", icon: CheckCircle2, className: "text-success" },
@@ -38,6 +48,12 @@ const STATUS_META: Record<HistoryStatus, { label: string; icon: typeof CheckCirc
   timeout: { label: "Timed out", icon: Timer, className: "text-warning" },
   cancelled: { label: "Cancelled", icon: Ban, className: "text-muted-foreground" },
 };
+
+const KINDS = [
+  { value: "all", label: "All activity" },
+  { value: "query", label: "Editor queries" },
+  { value: "data_apply", label: "Data Studio changes" },
+];
 
 const FILTERS = [
   { value: "all", label: "All statuses" },
@@ -82,6 +98,9 @@ function HistoryRow({ entry }: { entry: HistoryEntry }) {
         <TooltipContent>{meta.label}</TooltipContent>
       </Tooltip>
       <div className="min-w-0 flex-1">
+        {entry.kind === "data_apply" && (
+          <span className="mb-1 inline-block rounded bg-chart-2/15 px-1.5 py-0.5 text-[10px] font-medium text-chart-2">Data Studio</span>
+        )}
         <pre className="line-clamp-3 font-mono text-xs break-all whitespace-pre-wrap text-foreground">{entry.sql_content}</pre>
         {entry.error_message && <p className="mt-1 line-clamp-2 text-xs text-destructive">{entry.error_message}</p>}
         <p className="mt-1.5 flex flex-wrap items-center gap-x-3 gap-y-1 text-[11px] text-muted-foreground">
@@ -100,6 +119,13 @@ function HistoryRow({ entry }: { entry: HistoryEntry }) {
           <span>{entry.connection_name ?? <em>deleted connection</em>}</span>
         </p>
       </div>
+      <PinButton
+        target="history"
+        id={entry.id}
+        pinned={entry.pinned}
+        label="history entry"
+        className={cn(!entry.pinned && "opacity-0 group-hover:opacity-100 focus-visible:opacity-100")}
+      />
       <div className="flex shrink-0 items-start gap-1 opacity-0 transition-opacity group-hover:opacity-100 focus-within:opacity-100">
         <Button size="sm" variant="ghost" className="gap-1.5" onClick={() => open(true)} disabled={!entry.connection_id}>
           <Play className="size-3" /> Run again
@@ -122,13 +148,13 @@ function HistoryRow({ entry }: { entry: HistoryEntry }) {
 }
 
 export default function HistoryPage() {
-  const [search, setSearch] = useState("");
-  const [status, setStatus] = useState("all");
-  const q = useDeferredValue(search.trim());
-  const history = useHistory({
-    ...(q ? { q } : {}),
-    ...(status !== "all" ? { status: status as HistoryStatus } : {}),
-  });
+  const [filters, setFilters] = useState<HistoryFilterState>(emptyHistoryFilters);
+  const deferred = useDeferredValue(filters);
+  const history = useHistory(historyQuery(deferred));
+  const set = (patch: Partial<HistoryFilterState>) => setFilters((f) => ({ ...f, ...patch }));
+  const filtered = isFiltered(filters);
+  const dateInput =
+    "h-9 rounded-md border bg-background px-2 text-sm outline-none focus-visible:ring-2 focus-visible:ring-ring [color-scheme:light] dark:[color-scheme:dark]";
   const clear = useClearHistory();
   const items = history.data?.pages.flatMap((p) => p.items) ?? [];
 
@@ -155,9 +181,9 @@ export default function HistoryPage() {
       <div className="mb-3 flex flex-wrap gap-2">
         <div className="relative min-w-56 flex-1">
           <Search className="pointer-events-none absolute top-1/2 left-2.5 size-3.5 -translate-y-1/2 text-muted-foreground" />
-          <Input value={search} onChange={(e) => setSearch(e.target.value)} placeholder="Search SQL…" className="pl-8" aria-label="Search history" />
+          <Input value={filters.search} onChange={(e) => set({ search: e.target.value })} placeholder="Search SQL…" className="pl-8" aria-label="Search history" />
         </div>
-        <Select items={FILTERS} value={status} onValueChange={(v) => setStatus(String(v ?? "all"))}>
+        <Select items={FILTERS} value={filters.status} onValueChange={(v) => set({ status: String(v ?? "all") as HistoryStatus | "all" })}>
           <SelectTrigger className="w-40" aria-label="Filter by status">
             <SelectValue />
           </SelectTrigger>
@@ -169,6 +195,57 @@ export default function HistoryPage() {
             ))}
           </SelectContent>
         </Select>
+        <Select items={KINDS} value={filters.kind} onValueChange={(v) => set({ kind: String(v ?? "all") as HistoryKind | "all" })}>
+          <SelectTrigger className="w-44" aria-label="Filter by activity">
+            <SelectValue />
+          </SelectTrigger>
+          <SelectContent>
+            {KINDS.map((k) => (
+              <SelectItem key={k.value} value={k.value}>
+                {k.label}
+              </SelectItem>
+            ))}
+          </SelectContent>
+        </Select>
+      </div>
+      <div className="mb-3 flex flex-wrap items-center gap-2 text-sm">
+        <Select
+          items={DURATION_PRESETS.map((d) => ({ value: d.value, label: d.label }))}
+          value={filters.duration}
+          onValueChange={(v) => set({ duration: String(v ?? "any") as DurationPreset })}
+        >
+          <SelectTrigger className="w-40" aria-label="Filter by duration">
+            <SelectValue />
+          </SelectTrigger>
+          <SelectContent>
+            {DURATION_PRESETS.map((d) => (
+              <SelectItem key={d.value} value={d.value}>
+                {d.label}
+              </SelectItem>
+            ))}
+          </SelectContent>
+        </Select>
+        <label className="flex items-center gap-1.5 text-xs text-muted-foreground">
+          From
+          <input type="date" value={filters.fromDate} max={filters.toDate || undefined} onChange={(e) => set({ fromDate: e.target.value })} aria-label="From date" className={dateInput} />
+        </label>
+        <label className="flex items-center gap-1.5 text-xs text-muted-foreground">
+          To
+          <input type="date" value={filters.toDate} min={filters.fromDate || undefined} onChange={(e) => set({ toDate: e.target.value })} aria-label="To date" className={dateInput} />
+        </label>
+        <Button
+          variant={filters.pinnedOnly ? "secondary" : "outline"}
+          aria-pressed={filters.pinnedOnly}
+          className="gap-1.5"
+          onClick={() => set({ pinnedOnly: !filters.pinnedOnly })}
+        >
+          <Pin className="size-3.5" /> Pinned
+        </Button>
+        {filtered && (
+          <Button variant="ghost" size="sm" onClick={() => setFilters(emptyHistoryFilters)}>
+            Reset filters
+          </Button>
+        )}
       </div>
 
       <div className="rounded-lg border bg-card">
@@ -184,8 +261,8 @@ export default function HistoryPage() {
           <EmptyState
             className="py-16"
             icon={History}
-            title={q || status !== "all" ? "No matching queries" : "No history yet"}
-            description={q || status !== "all" ? "Try a different search or filter." : "Queries you run will be recorded here."}
+            title={filtered ? "No matching queries" : "No history yet"}
+            description={filtered ? "Try a different search or filter." : "Queries you run will be recorded here."}
           />
         ) : (
           <ul className="divide-y">

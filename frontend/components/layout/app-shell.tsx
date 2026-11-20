@@ -5,7 +5,9 @@ import { ConnectionDialog } from "@/components/connections/connection-dialog";
 import { AppSidebar } from "./app-sidebar";
 import { ConnectionSelector } from "./connection-selector";
 import { EnvironmentBanner } from "./environment-banner";
+import { QuickOpen } from "./quick-open";
 import { TopBar } from "./top-bar";
+import { WorkspaceSync } from "./workspace-sync";
 
 export function AppShell({ children }: { children: ReactNode }) {
   return (
@@ -17,6 +19,8 @@ export function AppShell({ children }: { children: ReactNode }) {
         <main className="min-h-0 flex-1 overflow-hidden">{children}</main>
       </div>
       <ConnectionDialog />
+      <QuickOpen />
+      <WorkspaceSync />
     </div>
   );
 }

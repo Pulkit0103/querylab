@@ -6,11 +6,12 @@ use crate::{
     errors::AppResult,
     models::library::{
         Collection, CollectionRequest, CreateSavedQuery, HistoryEntry, HistoryPage, HistoryQuery,
-        SavedQuery, SavedQueryFilter, StatsQuery, StatsResponse, UpdateSavedQuery,
+        PinRequest, SavedQuery, SavedQueryFilter, StatsQuery, StatsResponse, TagCount,
+        UpdateCollectionRequest, UpdateSavedQuery,
     },
     services::{auth::AuthUser, library::LibraryService},
     state::AppState,
-    utils::validation::{ApiPath, ApiQuery, ValidatedJson},
+    utils::validation::{ApiPath, ApiQuery, Validate, ValidatedJson},
 };
 
 // -- history ------------------------------------------------------------------
@@ -20,6 +21,7 @@ pub async fn list_history(
     user: AuthUser,
     ApiQuery(q): ApiQuery<HistoryQuery>,
 ) -> AppResult<Json<HistoryPage>> {
+    q.validate()?;
     Ok(Json(
         LibraryService::new(&state)
             .history(user.user_id, &q)
@@ -35,6 +37,19 @@ pub async fn get_history(
     Ok(Json(
         LibraryService::new(&state)
             .history_entry(user.user_id, id)
+            .await?,
+    ))
+}
+
+pub async fn pin_history(
+    State(state): State<AppState>,
+    user: AuthUser,
+    ApiPath(id): ApiPath<Uuid>,
+    ValidatedJson(req): ValidatedJson<PinRequest>,
+) -> AppResult<Json<HistoryEntry>> {
+    Ok(Json(
+        LibraryService::new(&state)
+            .pin_history(user.user_id, id, req.pinned)
             .await?,
     ))
 }
@@ -84,20 +99,20 @@ pub async fn create_collection(
     ValidatedJson(req): ValidatedJson<CollectionRequest>,
 ) -> AppResult<(StatusCode, Json<Collection>)> {
     let c = LibraryService::new(&state)
-        .create_collection(user.user_id, &req.name)
+        .create_collection(user.user_id, &req.name, req.parent_id)
         .await?;
     Ok((StatusCode::CREATED, Json(c)))
 }
 
-pub async fn rename_collection(
+pub async fn update_collection(
     State(state): State<AppState>,
     user: AuthUser,
     ApiPath(id): ApiPath<Uuid>,
-    ValidatedJson(req): ValidatedJson<CollectionRequest>,
+    ValidatedJson(req): ValidatedJson<UpdateCollectionRequest>,
 ) -> AppResult<Json<Collection>> {
     Ok(Json(
         LibraryService::new(&state)
-            .rename_collection(user.user_id, id, &req.name)
+            .update_collection(user.user_id, id, &req)
             .await?,
     ))
 }
@@ -161,6 +176,23 @@ pub async fn update_saved(
             .update_saved(user.user_id, id, &req)
             .await?,
     ))
+}
+
+pub async fn pin_saved(
+    State(state): State<AppState>,
+    user: AuthUser,
+    ApiPath(id): ApiPath<Uuid>,
+    ValidatedJson(req): ValidatedJson<PinRequest>,
+) -> AppResult<Json<SavedQuery>> {
+    Ok(Json(
+        LibraryService::new(&state)
+            .pin_saved(user.user_id, id, req.pinned)
+            .await?,
+    ))
+}
+
+pub async fn tags(State(state): State<AppState>, user: AuthUser) -> AppResult<Json<Vec<TagCount>>> {
+    Ok(Json(LibraryService::new(&state).tags(user.user_id).await?))
 }
 
 pub async fn delete_saved(

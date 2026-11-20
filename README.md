@@ -275,6 +275,34 @@ of SQL text. Use a role with only `SELECT` grants for defence in depth.
   output columns and memory. The raw JSON plan is one click away and can be
   copied.
 
+## Library and workspace
+
+- **History filters:** search, status, activity (editor queries or Data
+  Studio changes), duration, date range and pinned. Filters combine, and
+  pages stay correct because the keyset cursor applies after them.
+- **Pins:** saved queries and history entries can be pinned. Pinned items
+  are listed first, appear in the dashboard's **Pinned** panel and in
+  **Ctrl+P**, a quick-open available on every page.
+- **Folders and tags:**
+  - Folders nest up to three levels. Moves are checked on the server
+    inside a transaction that locks the user's folders, so a folder can
+    never be moved into its own subtree, even by concurrent requests.
+  - Names are unique among siblings.
+  - Tags are lower-cased and trimmed: at most 20 per query and 40
+    characters each. Filtering by several tags returns queries carrying
+    all of them.
+- **Tabs follow you:**
+  - Open editor tabs (title, SQL, saved-query link), the active tab and
+    the active connection are saved to the server shortly after each
+    change and restored when you sign in elsewhere.
+  - The newer side wins at sign-in. While several browsers are open the
+    last write wins.
+  - Local storage remains an offline cache, and tabs cached for another
+    account in the same browser are never uploaded.
+- **Retention:** history older than the account's retention setting
+  (Settings, 90 days by default) is deleted hourly in batches. Pinned
+  entries are kept.
+
 ## Table Editor (Data Studio)
 
 The **Table Editor** (`/tables`, or **Open in Data Studio** on a table in the
@@ -451,18 +479,23 @@ explorer) browses and edits table rows without writing SQL.
 | POST   | `/api/query/execute`      | Execute one SQL statement                |
 | POST   | `/api/query/explain`      | EXPLAIN / EXPLAIN ANALYZE (JSON plan)    |
 | POST   | `/api/query/{execution_id}/cancel` | Cancel a running execution      |
-| GET    | `/api/history?limit=&before=&status=&connection_id=&q=` | Execution history (keyset paginated) |
+| GET    | `/api/history?limit=&before=&status=&kind=&connection_id=&q=&min_ms=&max_ms=&from=&to=&pinned=` | Execution history (keyset paginated, combinable filters) |
+| PUT    | `/api/history/{id}/pin`   | Pin or unpin an entry (`{pinned}`)       |
 | GET    | `/api/history/{id}`       | One history entry                        |
 | DELETE | `/api/history/{id}`       | Delete one entry                         |
 | DELETE | `/api/history`            | Clear history                            |
-| GET    | `/api/queries?q=&collection_id=` | List/search saved queries         |
+| GET    | `/api/queries?q=&collection_id=&tags=&pinned=` | List/search saved queries (pinned first; `tags` must all match) |
+| PUT    | `/api/queries/{id}/pin`   | Pin or unpin a saved query               |
+| GET    | `/api/tags`               | The user's tags with counts              |
 | POST   | `/api/queries`            | Save a query                             |
 | GET    | `/api/queries/{id}`       | Get a saved query                        |
 | PUT    | `/api/queries/{id}`       | Update (explicit `null` clears a link)   |
 | DELETE | `/api/queries/{id}`       | Delete a saved query                     |
-| GET/POST | `/api/collections`      | List/create collections (folders)        |
-| PUT/DELETE | `/api/collections/{id}` | Rename/delete (queries are kept)       |
+| GET/POST | `/api/collections`      | List/create folders (`parent_id` nests them) |
+| PUT/DELETE | `/api/collections/{id}` | Rename and/or move (`parent_id`); delete removes subfolders, queries are kept |
 | GET    | `/api/stats?days=`        | Dashboard statistics                     |
+| GET/PUT | `/api/workspace/tabs`    | Load/save the synced editor session (≤ 50 tabs, ≤ 2 MiB) |
+| GET/PUT | `/api/workspace/settings` | History retention in days (1–3650, default 90) |
 
 Every execution is recorded in history with status (`success`, `error`,
 `timeout`, `cancelled`), duration, row count and error message. Saved queries

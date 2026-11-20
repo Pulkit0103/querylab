@@ -6,6 +6,7 @@ pub mod connections;
 pub mod library;
 pub mod sessions;
 pub mod users;
+pub mod workspace;
 
 use std::time::Duration;
 

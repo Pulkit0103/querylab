@@ -470,20 +470,29 @@ audit events.
 
 ## Phase 5 — Query History & Workspace Management
 
-**Goal:** make QueryLab a daily-use tool.
+**Goal:** make QueryLab a daily-use tool. **Status:** ✅ delivered.
+
+> **Implementation notes:**
+> - Collection names are now unique among siblings (`UNIQUE NULLS NOT DISTINCT (user_id, parent_id, name)`) instead of per user. Deleting a folder deletes its subfolders; their queries are kept, without a folder.
+> - Folder moves lock the user's folders (`FOR UPDATE`) before the ancestry check, so concurrent moves cannot combine into a cycle.
+> - History gains a `kind` filter. Data Studio applies recorded before this phase were backfilled to `data_apply`.
+> - Pinning a saved query does not change `updated_at`: the touch trigger now fires only on content changes.
+> - Retention and settings use `users.history_retention_days` (1–3650 days, default 90), edited through `GET/PUT /api/workspace/settings`. Pinned history is never pruned.
+> - The tab session also stores the active connection. On sign-in the newer side wins, and while several browsers are open the last write wins. Tabs cached locally for another account are never uploaded.
+> - Duration filtering uses presets instead of a slider, and dates use the browser's date inputs. No dependency was added.
 
 | Feature | Status | Notes |
 | --- | --- | --- |
 | Complete execution history | ✅ | Success, error, timeout and cancelled; keyset pagination |
 | Search; filter by database and status | ✅ | |
-| Filter by duration | ☐ | `min_ms` / `max_ms` |
-| Filter by date range | ☐ | `from` / `to` |
+| Filter by duration | ✅ | `min_ms` / `max_ms` |
+| Filter by date range | ✅ | `from` / `to` |
 | Re-run previous queries | ✅ | "Run again" and "Open in editor" |
-| Pin frequently used queries | ☐ | Pins on saved queries and on history entries |
-| Save queries; folders and collections | ◐ | Flat collections exist. **Add:** nested folders, with a depth limit of 3. |
-| Query descriptions and tags | ◐ | Descriptions exist. **Add:** tags with filtering. |
-| Restore previously opened tabs | ◐ | Tabs persist per browser. **Add:** server-side tab sessions so tabs follow the user across devices. |
-| History retention setting | ☐ | Automatic pruning older than N days, configurable per user |
+| Pin frequently used queries | ✅ | Pins on saved queries and on history entries |
+| Save queries; folders and collections | ✅ | Nested folders, with a depth limit of 3 |
+| Query descriptions and tags | ✅ | Descriptions, and tags with filtering |
+| Restore previously opened tabs | ✅ | Server-side tab sessions follow the user across devices; local storage is the offline cache |
+| History retention setting | ✅ | Automatic pruning older than N days, configurable per user |
 
 **Frontend tasks**
 - History filters: a duration range slider and a date range picker.

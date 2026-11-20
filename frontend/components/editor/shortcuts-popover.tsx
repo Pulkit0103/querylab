@@ -8,6 +8,7 @@ import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover
 const SHORTCUTS: [string, string][] = [
   ["Ctrl Enter", "Run selection or statement under cursor"],
   ["Ctrl S", "Save query"],
+  ["Ctrl P", "Open a pinned or saved query"],
   ["Ctrl Shift F", "Format SQL"],
   ["Ctrl /", "Toggle line comment"],
   ["Ctrl F", "Find"],

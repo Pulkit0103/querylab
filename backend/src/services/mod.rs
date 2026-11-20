@@ -13,3 +13,4 @@ pub mod schema;
 pub mod sql_builder;
 pub mod target_db;
 pub mod value_decode;
+pub mod workspace;

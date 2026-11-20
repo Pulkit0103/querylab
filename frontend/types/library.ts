@@ -1,6 +1,7 @@
 /** History, saved queries, collections and stats (mirrors `models::library`). */
 
 export type HistoryStatus = "success" | "error" | "cancelled" | "timeout";
+export type HistoryKind = "query" | "data_apply" | "migration" | "import";
 
 export interface HistoryEntry {
   id: string;
@@ -12,6 +13,21 @@ export interface HistoryEntry {
   error_message: string | null;
   row_count: number | null;
   executed_at: string;
+  pinned: boolean;
+  kind: HistoryKind;
+}
+
+export interface HistoryFilters {
+  q?: string;
+  status?: HistoryStatus;
+  kind?: HistoryKind;
+  connection_id?: string;
+  min_ms?: number;
+  max_ms?: number;
+  /** ISO timestamps; `to` is exclusive. */
+  from?: string;
+  to?: string;
+  pinned?: boolean;
 }
 
 export interface HistoryPage {
@@ -19,9 +35,12 @@ export interface HistoryPage {
   next_cursor: string | null;
 }
 
+/** A folder of saved queries; folders nest up to three levels. */
 export interface Collection {
   id: string;
   name: string;
+  parent_id: string | null;
+  /** Queries directly in this folder. */
   query_count: number;
   created_at: string;
   updated_at: string;
@@ -36,6 +55,8 @@ export interface SavedQuery {
   collection_id: string | null;
   created_at: string;
   updated_at: string;
+  pinned: boolean;
+  tags: string[];
 }
 
 export interface SavedQueryInput {
@@ -44,6 +65,35 @@ export interface SavedQueryInput {
   sql_content: string;
   connection_id?: string | null;
   collection_id?: string | null;
+  tags?: string[];
+}
+
+export interface TagCount {
+  tag: string;
+  count: number;
+}
+
+export interface WorkspaceTab {
+  id: string;
+  title: string;
+  sql: string;
+  saved_query_id: string | null;
+  saved_sql: string | null;
+}
+
+export interface WorkspaceSession {
+  tabs: WorkspaceTab[];
+  active_tab_id: string | null;
+  active_connection_id: string | null;
+}
+
+export interface SessionResponse {
+  session: WorkspaceSession | null;
+  updated_at: string | null;
+}
+
+export interface WorkspaceSettings {
+  history_retention_days: number;
 }
 
 export interface Stats {

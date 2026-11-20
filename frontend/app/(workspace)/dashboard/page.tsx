@@ -6,6 +6,7 @@ import { ArrowRight, Bookmark, Database, History, SquareTerminal } from "lucide-
 
 import { PageContainer } from "@/components/common/page-container";
 import { ConnectionList } from "@/components/connections/connection-list";
+import { PinnedPanel } from "@/components/dashboard/pinned-panel";
 import { ActivityChart, LatencyChart } from "@/components/dashboard/stats-charts";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Skeleton } from "@/components/ui/skeleton";
@@ -82,6 +83,12 @@ export default function DashboardPage() {
             <Tile label="Connections" value={formatNumber(t.connections)} />
           </>
         )}
+      </div>
+
+      <div className="mt-4">
+        <Panel title="Pinned">
+          <PinnedPanel />
+        </Panel>
       </div>
 
       <div className="mt-4 grid gap-4 lg:grid-cols-2">
