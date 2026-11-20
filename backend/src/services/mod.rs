@@ -7,6 +7,7 @@ pub mod auth;
 pub mod connections;
 pub mod data_studio;
 pub mod ddl;
+pub mod diagrams;
 pub mod execution;
 pub mod library;
 pub mod schema;

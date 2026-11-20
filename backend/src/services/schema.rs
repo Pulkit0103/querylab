@@ -65,7 +65,7 @@ impl<'a> SchemaService<'a> {
     }
 
     /// Opens a read-only introspection connection for a connection the user owns.
-    async fn open(&self, user_id: Uuid, connection_id: Uuid) -> AppResult<PgConnection> {
+    pub(crate) async fn open(&self, user_id: Uuid, connection_id: Uuid) -> AppResult<PgConnection> {
         self.state.connect_limiter.check(&user_id.to_string())?;
         let service = ConnectionService::new(self.state);
         let record = service.get_record(user_id, connection_id).await?;
@@ -671,6 +671,6 @@ async fn table_exists(conn: &mut PgConnection, schema: &str, table: &str) -> App
     .map_err(target_db::query_error)
 }
 
-async fn close(conn: PgConnection) {
+pub(crate) async fn close(conn: PgConnection) {
     let _ = tokio::time::timeout(Duration::from_secs(2), conn.close()).await;
 }

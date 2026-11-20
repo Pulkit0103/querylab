@@ -553,16 +553,24 @@ CREATE INDEX query_history_duration_idx ON query_history (user_id, execution_tim
 ## Phase 6 — Schema Visualization & ER Diagrams
 
 **Goal:** make complex databases easy to understand visually.
-**Status:** ☐ new. **Depends on:** Phase 3.
+**Status:** ✅ delivered. **Depends on:** Phase 3.
 
-| Feature | Notes |
-| --- | --- |
-| Generate ER diagrams automatically | From the introspection snapshot; per schema or for selected tables |
-| Tables as nodes, FK relationships as edges | Nodes list columns with PK/FK icons |
-| One-to-one and one-to-many relationships | Inferred: an FK with a unique or PK constraint on its columns is 1:1, otherwise 1:N; nullability shows optionality (crow's foot notation) |
-| Drag-and-drop positioning, zoom, pan, search | Positions are saved per connection and schema |
-| Click a table to inspect its columns | Side panel reusing the explorer's table details |
-| Export to PNG, SVG and PDF | Done client-side |
+> **Implementation notes:**
+> - Dependencies added: `@xyflow/react` (canvas), `elkjs` (layout, loaded on first use) and `html-to-image` (export, loaded on first use). PDF goes through the browser's print dialog, so `jspdf` was not needed.
+> - One-to-one is inferred when a valid, non-partial, expression-free unique index covers a subset of the foreign key columns (`INCLUDE` columns do not count). A partial unique index (for example "one open loan per copy") stays one-to-many.
+> - Without a selection, schemas over 150 tables show the 150 tables with the most foreign keys; a selection can hold up to 500. Foreign keys to tables that are not shown are counted (`hidden_edges`), not drawn; cross-schema edges are not drawn in this phase.
+> - Positions are keyed by table name. Saving merges with positions saved earlier, so tables outside the current selection keep their place. Tables without a saved position are laid out together and placed below the saved ones.
+> - The layout table is keyed by `(connection_id, schema_name)` with a composite foreign key to the owning connection, so deleting a connection deletes its layouts.
+> - `scripts/sample-db/03-diagram-fixtures.sql` adds a `library` schema covering every notation case.
+
+| Feature | Status | Notes |
+| --- | --- | --- |
+| Generate ER diagrams automatically | ✅ | From the introspection snapshot; per schema or for selected tables |
+| Tables as nodes, FK relationships as edges | ✅ | Nodes list columns with PK/FK icons |
+| One-to-one and one-to-many relationships | ✅ | Inferred: an FK with a unique or PK constraint on its columns is 1:1, otherwise 1:N; nullability shows optionality (crow's foot notation) |
+| Drag-and-drop positioning, zoom, pan, search | ✅ | Positions are saved per connection and schema |
+| Click a table to inspect its columns | ✅ | Side panel reusing the explorer's table details |
+| Export to PNG, SVG and PDF | ✅ | Done client-side |
 
 **Proposed dependencies (for review):**
 - `@xyflow/react` for the node and edge canvas, zoom, pan and minimap.
