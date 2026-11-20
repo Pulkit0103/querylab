@@ -24,3 +24,28 @@ export function qualifiedName(schema: string, table: string): string {
 export function previewSql(schema: string, table: string, limit = 100): string {
   return `SELECT *\nFROM ${qualifiedName(schema, table)}\nLIMIT ${limit};\n`;
 }
+
+/** `SELECT` with an explicit column list. */
+export function selectSql(schema: string, table: string, columns: string[], limit = 100): string {
+  const cols = columns.length ? columns.map(quoteIdent).join(",\n       ") : "*";
+  return `SELECT ${cols}\nFROM ${qualifiedName(schema, table)}\nLIMIT ${limit};\n`;
+}
+
+/**
+ * `INSERT` template with one placeholder per column. Placeholders are
+ * `NULL` annotated with the column type so the statement is valid SQL
+ * that can be edited in place. Columns with defaults are listed last and
+ * marked so they can be removed.
+ */
+export function insertTemplate(
+  schema: string,
+  table: string,
+  columns: { name: string; data_type: string; default_value: string | null }[],
+): string {
+  const ordered = [...columns.filter((c) => !c.default_value), ...columns.filter((c) => c.default_value)];
+  const names = ordered.map((c) => quoteIdent(c.name)).join(", ");
+  const values = ordered
+    .map((c) => `  NULL /* ${c.name} ${c.data_type}${c.default_value ? ", has default" : ""} */`)
+    .join(",\n");
+  return `INSERT INTO ${qualifiedName(schema, table)} (${names})\nVALUES (\n${values}\n);\n`;
+}

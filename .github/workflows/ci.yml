@@ -51,7 +51,9 @@ jobs:
           psql -v ON_ERROR_STOP=1 -c "CREATE DATABASE querylab OWNER querylab"
           psql -v ON_ERROR_STOP=1 -c "CREATE ROLE sample_owner LOGIN PASSWORD 'sample_owner' CREATEROLE"
           psql -v ON_ERROR_STOP=1 -c "CREATE DATABASE sampledb OWNER sample_owner"
-          PGUSER=sample_owner PGPASSWORD=sample_owner psql -v ON_ERROR_STOP=1 -q -d sampledb -f scripts/sample-db/01-schema.sql
+          for f in scripts/sample-db/*.sql; do
+            PGUSER=sample_owner PGPASSWORD=sample_owner psql -v ON_ERROR_STOP=1 -q -d sampledb -f "$f"
+          done
 
       - uses: dtolnay/rust-toolchain@stable
         with:

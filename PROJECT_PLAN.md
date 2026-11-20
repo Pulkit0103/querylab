@@ -286,23 +286,23 @@ ALTER TABLE database_connections
 ## Phase 3 — Advanced Database Explorer
 
 **Goal:** effortless database exploration. **Builds:** the shared
-introspection model (principle 5).
+introspection model (principle 5). **Status:** ✅ delivered.
 
 | Feature | Status | Notes |
 | --- | --- | --- |
 | Schema explorer, tables and views | ✅ | |
 | Columns and data types, primary and foreign keys | ✅ | |
 | Index explorer, table relationships | ✅ | |
-| Constraints explorer | ◐ | PK and FK exist. **Add:** unique, check and exclusion constraints, with definitions. |
-| Functions and stored procedures | ☐ | Signature, return type, language, volatility, definition |
-| Triggers | ☐ | Timing, events, function, enabled state, definition |
-| Materialized views, sequences, enums and domains | ☐ | Listed in the tree |
-| Search tables **and columns** | ◐ | Table search exists. **Add:** column search across the catalog. |
-| Right-click table → view records | ◐ | "Preview data" exists in the menu. **Add:** a real context menu, and **Open in Data Studio** once Phase 4 exists. |
+| Constraints explorer | ✅ | Primary, foreign, unique, check and exclusion constraints with definitions |
+| Functions and stored procedures | ✅ | Signature, return type, language, volatility, security definer and definition; extension-owned functions hidden |
+| Triggers | ✅ | Timing, events, level, function, enabled state, definition |
+| Materialized views, sequences, enums and domains | ✅ | Tree sections for tables, views, functions, sequences and types (also composite and range types) |
+| Search tables **and columns** | ✅ | Tree filter plus server-side search over tables, columns and functions; exact matches first |
+| Right-click table → view records | ✅ | Context menu on tables and views. **Open in Data Studio** is added in Phase 4. |
 | Copy table name | ✅ | |
-| Generate SELECT statement | ◐ | Preview SQL exists. **Add:** an explicit column-list SELECT in a new tab. |
-| Generate CREATE TABLE statement | ☐ | DDL generated from the introspection model |
-| Generate INSERT/UPDATE templates | ☐ | Parameter placeholders, opened in the editor |
+| Generate SELECT statement | ✅ | Explicit, quoted column list in a new tab |
+| Generate CREATE TABLE statement | ✅ | Identity and generated columns, collations, constraints, indexes, triggers and comments; views and materialized views. Verified by a round-trip test. |
+| Generate INSERT/UPDATE templates | ◐ | INSERT template with typed placeholders. UPDATE templates come with the Data Studio change sets (Phase 4). |
 
 **Frontend tasks**
 - Tree sections per schema: Tables, Views, Materialized Views, Functions,

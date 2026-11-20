@@ -75,6 +75,16 @@ pub fn build_router(state: AppState) -> Router {
             "/connections/{id}/tables/{table}/relationships",
             get(schema::relationships),
         )
+        .route(
+            "/connections/{id}/tables/{table}/constraints",
+            get(schema::constraints),
+        )
+        .route("/connections/{id}/tables/{table}/ddl", get(schema::ddl))
+        .route("/connections/{id}/functions", get(schema::functions))
+        .route("/connections/{id}/functions/{oid}", get(schema::function))
+        .route("/connections/{id}/triggers", get(schema::triggers))
+        .route("/connections/{id}/objects", get(schema::objects))
+        .route("/connections/{id}/search", get(schema::search))
         // SQL execution
         .route("/query/execute", post(query::execute))
         .route("/query/explain", post(query::explain))
