@@ -21,7 +21,9 @@ use sqlx::postgres::{PgDatabaseError, PgErrorPosition};
 use crate::{
     config::Config,
     errors::{AppError, AppResult, SqlErrorInfo},
-    models::connection::{ConnectionRecord, ConnectionSecret, CreateConnectionRequest, SslMode},
+    models::connection::{
+        ConnectionRecord, ConnectionSecret, ConnectionStatus, CreateConnectionRequest, SslMode,
+    },
     utils::network,
 };
 
@@ -33,6 +35,8 @@ pub struct TargetSpec<'a> {
     pub username: &'a str,
     pub password: &'a str,
     pub ssl_mode: SslMode,
+    /// PEM CA bundle used to verify the server certificate.
+    pub ssl_root_cert: Option<&'a str>,
     pub read_only: bool,
 }
 
@@ -45,6 +49,7 @@ impl<'a> TargetSpec<'a> {
             username: &record.username,
             password: &secret.password,
             ssl_mode: record.ssl_mode(),
+            ssl_root_cert: record.ssl_root_cert.as_deref(),
             read_only: record.read_only,
         }
     }
@@ -57,6 +62,7 @@ impl<'a> TargetSpec<'a> {
             username: &req.username,
             password: &req.password,
             ssl_mode: req.ssl_mode,
+            ssl_root_cert: req.ssl_root_cert.as_deref(),
             read_only: req.read_only,
         }
     }
@@ -72,9 +78,49 @@ fn pg_ssl_mode(mode: SslMode) -> PgSslMode {
     }
 }
 
+/// A failed connection attempt: the user-facing error plus a status
+/// classification recorded by connection tests. Converts into [`AppError`]
+/// so callers that only need the error can use `?`.
+#[derive(Debug)]
+pub struct ConnectError {
+    pub status: ConnectionStatus,
+    pub error: Box<AppError>,
+}
+
+impl From<ConnectError> for AppError {
+    fn from(e: ConnectError) -> Self {
+        *e.error
+    }
+}
+
+/// Classifies a driver error for the connection status indicator.
+pub fn classify_connect_error(err: &sqlx::Error) -> ConnectionStatus {
+    match err {
+        // SQLSTATE class 28: invalid authorization specification.
+        sqlx::Error::Database(db) if db.code().is_some_and(|c| c.starts_with("28")) => {
+            ConnectionStatus::AuthFailed
+        }
+        sqlx::Error::Io(_) => ConnectionStatus::Unreachable,
+        sqlx::Error::Tls(_) => ConnectionStatus::TlsError,
+        _ => ConnectionStatus::Error,
+    }
+}
+
+fn connect_failure(err: sqlx::Error, host: &str, port: u16) -> ConnectError {
+    ConnectError {
+        status: classify_connect_error(&err),
+        error: Box::new(map_connect_error(err, host, port)),
+    }
+}
+
 /// Opens a dedicated connection after enforcing the network policy.
-pub async fn connect(config: &Config, spec: &TargetSpec<'_>) -> AppResult<PgConnection> {
-    network::check_destination(spec.host, spec.port, config.allow_private_networks).await?;
+pub async fn connect(config: &Config, spec: &TargetSpec<'_>) -> Result<PgConnection, ConnectError> {
+    network::check_destination(spec.host, spec.port, config.allow_private_networks)
+        .await
+        .map_err(|error| ConnectError {
+            status: ConnectionStatus::Error,
+            error: Box::new(error),
+        })?;
 
     let host = spec
         .host
@@ -95,17 +141,23 @@ pub async fn connect(config: &Config, spec: &TargetSpec<'_>) -> AppResult<PgConn
     if spec.read_only {
         options = options.options([("default_transaction_read_only", "on")]);
     }
+    if let Some(pem) = spec.ssl_root_cert {
+        options = options.ssl_root_cert_from_pem(pem.as_bytes().to_vec());
+    }
 
     let timeout = config.target_connect_timeout;
     match tokio::time::timeout(timeout, options.connect()).await {
         Ok(Ok(conn)) => Ok(conn),
-        Ok(Err(err)) => Err(map_connect_error(err, spec.host, spec.port)),
-        Err(_) => Err(AppError::TargetUnavailable(format!(
-            "timed out connecting to {}:{} after {}s",
-            spec.host,
-            spec.port,
-            timeout.as_secs()
-        ))),
+        Ok(Err(err)) => Err(connect_failure(err, spec.host, spec.port)),
+        Err(_) => Err(ConnectError {
+            status: ConnectionStatus::Unreachable,
+            error: Box::new(AppError::TargetUnavailable(format!(
+                "timed out connecting to {}:{} after {}s",
+                spec.host,
+                spec.port,
+                timeout.as_secs()
+            ))),
+        }),
     }
 }
 
@@ -212,7 +264,7 @@ pub struct ConnectionTestResult {
 pub async fn test_connection(
     config: &Config,
     spec: &TargetSpec<'_>,
-) -> AppResult<ConnectionTestResult> {
+) -> Result<ConnectionTestResult, ConnectError> {
     let started = Instant::now();
     let mut conn = connect(config, spec).await?;
     let row = sqlx::query(
@@ -223,7 +275,7 @@ pub async fn test_connection(
     )
     .fetch_one(&mut conn)
     .await
-    .map_err(|e| map_connect_error(e, spec.host, spec.port))?;
+    .map_err(|e| connect_failure(e, spec.host, spec.port))?;
     let latency_ms = started.elapsed().as_millis() as u64;
     let _ = tokio::time::timeout(Duration::from_secs(2), conn.close()).await;
 
@@ -238,6 +290,14 @@ pub async fn test_connection(
     if !spec.read_only {
         warnings.push(
             "Read-write mode is enabled: statements can modify data on this database.".into(),
+        );
+    }
+    if spec.ssl_root_cert.is_some()
+        && !matches!(spec.ssl_mode, SslMode::VerifyCa | SslMode::VerifyFull)
+    {
+        warnings.push(
+            "A CA certificate is configured but only `verify-ca` and `verify-full` check the server against it."
+                .into(),
         );
     }
     if matches!(spec.ssl_mode, SslMode::Disable | SslMode::Prefer) {

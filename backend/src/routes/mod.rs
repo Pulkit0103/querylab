@@ -50,6 +50,15 @@ pub fn build_router(state: AppState) -> Router {
                 .delete(connections::delete),
         )
         .route("/connections/{id}/test", post(connections::test_saved))
+        .route("/connections/{id}/duplicate", post(connections::duplicate))
+        .route(
+            "/connection-groups",
+            get(connections::list_groups).post(connections::create_group),
+        )
+        .route(
+            "/connection-groups/{id}",
+            axum::routing::put(connections::update_group).delete(connections::delete_group),
+        )
         // Schema explorer
         .route("/connections/{id}/schemas", get(schema::schemas))
         .route("/connections/{id}/tables", get(schema::tables))

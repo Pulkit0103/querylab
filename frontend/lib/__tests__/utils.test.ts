@@ -121,5 +121,9 @@ describe("errorMessageFor", () => {
     expect(errorMessageFor(500, "internal server error", "abc-123")).toBe("internal server error (reference abc-123)");
     expect(errorMessageFor(502, "bad gateway", null)).toBe("bad gateway");
     expect(errorMessageFor(404, "connection not found", "abc-123")).toBe("connection not found");
+    // The user's own database failing is not a QueryLab fault.
+    expect(errorMessageFor(502, "password authentication failed", "abc-123", "connection_error")).toBe(
+      "password authentication failed",
+    );
   });
 });

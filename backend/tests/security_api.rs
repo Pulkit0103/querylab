@@ -383,7 +383,7 @@ async fn concurrent_executions_are_capped_per_user(pool: PgPool) {
 
     // Alice saturates her slots; Bob's query runs alongside unaffected.
     let alice_runs =
-        join_all((0..4).map(|_| send(&app, run(&alice_conn, &alice, "SELECT pg_sleep(1.5)"))));
+        join_all((0..4).map(|_| send(&app, run(&alice_conn, &alice, "SELECT pg_sleep(3)"))));
     let bob_run = async {
         tokio::time::sleep(std::time::Duration::from_millis(300)).await;
         send(&app, run(&bob_conn, &bob, "SELECT 1 AS ok")).await

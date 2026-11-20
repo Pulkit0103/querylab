@@ -5,7 +5,7 @@ import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 
 import { api, ApiError } from "@/lib/api-client";
 import { useWorkspaceStore } from "@/stores/workspace-store";
-import type { Connection, ConnectionInput } from "@/types/api";
+import type { Connection, ConnectionGroup, ConnectionInput } from "@/types/api";
 
 export interface ConnectionTestResult {
   ok: boolean;
@@ -20,7 +20,7 @@ export interface ConnectionTestResult {
 
 export const connectionKeys = {
   all: ["connections"] as const,
-  test: (id: string) => ["connections", id, "test"] as const,
+  groups: ["connection-groups"] as const,
 };
 
 export function useConnections() {
@@ -72,7 +72,7 @@ export function useUpdateConnection() {
       );
       // Credentials or target may have changed; cached schema is stale.
       void qc.invalidateQueries({ queryKey: ["schema", updated.id] });
-      qc.removeQueries({ queryKey: connectionKeys.test(updated.id) });
+      void qc.invalidateQueries({ queryKey: connectionKeys.groups });
     },
   });
 }
@@ -95,28 +95,77 @@ export function useTestDraftConnection() {
   });
 }
 
-/** Tests a saved connection; the result is cached as its status. */
+/**
+ * Tests a saved connection. The server records the outcome as the
+ * connection's status (also on failure), so the list is refetched either way.
+ */
 export function useTestSavedConnection() {
   const qc = useQueryClient();
   return useMutation<ConnectionTestResult, ApiError, string>({
     mutationFn: (id) => api.post<ConnectionTestResult>(`/api/connections/${id}/test`),
-    onSuccess: (result, id) => {
-      qc.setQueryData(connectionKeys.test(id), { ok: true, result });
+    onSettled: () => void qc.invalidateQueries({ queryKey: connectionKeys.all }),
+  });
+}
+
+/**
+ * Reconnect: re-tests the connection and drops cached schema metadata so
+ * the explorer and autocomplete reload from the server.
+ */
+export function useReconnect() {
+  const qc = useQueryClient();
+  return useMutation<ConnectionTestResult, ApiError, string>({
+    mutationFn: (id) => api.post<ConnectionTestResult>(`/api/connections/${id}/test`),
+    onSettled: (_, __, id) => {
       void qc.invalidateQueries({ queryKey: connectionKeys.all });
-    },
-    onError: (error, id) => {
-      qc.setQueryData(connectionKeys.test(id), { ok: false, error: error.message });
+      void qc.invalidateQueries({ queryKey: ["schema", id] });
     },
   });
 }
 
-export type ConnectionStatus = { ok: true; result: ConnectionTestResult } | { ok: false; error: string };
+export function useDuplicateConnection() {
+  const qc = useQueryClient();
+  return useMutation<Connection, ApiError, string>({
+    mutationFn: (id) => api.post<Connection>(`/api/connections/${id}/duplicate`),
+    onSuccess: () => {
+      void qc.invalidateQueries({ queryKey: connectionKeys.all });
+      void qc.invalidateQueries({ queryKey: connectionKeys.groups });
+    },
+  });
+}
 
-export function useConnectionStatus(id: string | null) {
-  return useQuery<ConnectionStatus | null>({
-    queryKey: connectionKeys.test(id ?? "none"),
-    queryFn: () => null,
-    enabled: false,
-    staleTime: Infinity,
+// -- groups -----------------------------------------------------------------
+
+export function useConnectionGroups() {
+  return useQuery<ConnectionGroup[], ApiError>({
+    queryKey: connectionKeys.groups,
+    queryFn: ({ signal }) => api.get<ConnectionGroup[]>("/api/connection-groups", { signal }),
+  });
+}
+
+export function useCreateGroup() {
+  const qc = useQueryClient();
+  return useMutation<ConnectionGroup, ApiError, { name: string }>({
+    mutationFn: (body) => api.post<ConnectionGroup>("/api/connection-groups", body),
+    onSuccess: () => void qc.invalidateQueries({ queryKey: connectionKeys.groups }),
+  });
+}
+
+export function useUpdateGroup() {
+  const qc = useQueryClient();
+  return useMutation<ConnectionGroup, ApiError, { id: string; name: string; position?: number }>({
+    mutationFn: ({ id, ...body }) => api.put<ConnectionGroup>(`/api/connection-groups/${id}`, body),
+    onSuccess: () => void qc.invalidateQueries({ queryKey: connectionKeys.groups }),
+  });
+}
+
+export function useDeleteGroup() {
+  const qc = useQueryClient();
+  return useMutation<void, ApiError, string>({
+    mutationFn: (id) => api.delete<void>(`/api/connection-groups/${id}`),
+    onSuccess: () => {
+      void qc.invalidateQueries({ queryKey: connectionKeys.groups });
+      // Its connections became ungrouped.
+      void qc.invalidateQueries({ queryKey: connectionKeys.all });
+    },
   });
 }

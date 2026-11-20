@@ -174,6 +174,26 @@ connection**. User SQL never runs on QueryLab's metadata pool.
   version, role and read-only status. They warn when the role is a
   superuser, read-write mode is on, or TLS is not required.
 
+**Connection manager:**
+
+- **Environments:** each connection is tagged `development`, `staging` or
+  `production`. Staging and production connections show a badge and a
+  persistent banner while they are active.
+- **Organizing:** connections can be filed into user-defined **groups**,
+  by drag and drop or through the **Move to group** menu. They can also
+  have a colour label, and can be searched and filtered by environment.
+- **Status:**
+  - Testing a saved connection records its status on the server:
+    `online`, `unreachable`, `auth_failed`, `tls_error` or `error`, with the
+    time, latency and error message.
+  - **Reconnect** re-tests the connection and reloads its cached schema.
+  - Changing the host, port, database, user, password or TLS settings
+    clears the stale status.
+- **TLS verification:** with `verify-ca` or `verify-full`, a custom CA
+  bundle (PEM) can be supplied to verify the server, e.g. a provider's CA.
+- **Duplicate** copies a connection. Its password is re-encrypted, because
+  each ciphertext is bound to its connection id.
+
 ## SQL execution engine
 
 `POST /api/query/execute` runs one statement on a dedicated connection:
@@ -348,7 +368,10 @@ of SQL text. Use a role with only `SELECT` grants for defence in depth.
 | PUT    | `/api/connections/{id}`   | Update; omit `password` to keep it       |
 | DELETE | `/api/connections/{id}`   | Delete a connection                      |
 | POST   | `/api/connections/test`   | Test an unsaved connection               |
-| POST   | `/api/connections/{id}/test` | Test a saved connection               |
+| POST   | `/api/connections/{id}/test` | Test a saved connection and record its status |
+| POST   | `/api/connections/{id}/duplicate` | Copy a connection (credentials re-encrypted) |
+| GET, POST | `/api/connection-groups` | List or create connection groups         |
+| PUT, DELETE | `/api/connection-groups/{id}` | Rename/reorder or delete a group (connections become ungrouped) |
 | GET    | `/api/connections/{id}/schemas` | Schemas with table counts          |
 | GET    | `/api/connections/{id}/tables?schema=` | Tables, views, row estimates, sizes |
 | GET    | `/api/connections/{id}/tables/{table}/columns?schema=` | Columns, types, PK/FK |

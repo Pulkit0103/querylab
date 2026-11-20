@@ -7,7 +7,7 @@ use uuid::Uuid;
 use crate::{
     errors::AppError,
     models::query::MAX_SQL_BYTES,
-    utils::validation::{Validate, Validator},
+    utils::validation::{double_option, Validate, Validator},
 };
 
 // ---------------------------------------------------------------------------
@@ -130,14 +130,6 @@ pub struct UpdateSavedQuery {
     pub connection_id: Option<Option<Uuid>>,
     #[serde(default, deserialize_with = "double_option")]
     pub collection_id: Option<Option<Uuid>>,
-}
-
-fn double_option<'de, T, D>(de: D) -> Result<Option<Option<T>>, D::Error>
-where
-    T: Deserialize<'de>,
-    D: serde::Deserializer<'de>,
-{
-    Option::<T>::deserialize(de).map(Some)
 }
 
 #[derive(Debug, Deserialize, Default)]
