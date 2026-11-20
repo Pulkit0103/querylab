@@ -3,6 +3,7 @@
 
 pub mod auth;
 pub mod connections;
+pub mod data;
 pub mod health;
 pub mod library;
 pub mod query;

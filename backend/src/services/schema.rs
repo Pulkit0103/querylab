@@ -51,7 +51,7 @@ const CONTYPE_ORDER: &str = "CASE con.contype WHEN 'p' THEN 0 WHEN 'u' THEN 1 WH
 
 const MAX_SEARCH_HITS: i64 = 100;
 
-const RELKIND_LABEL: &str =
+pub(crate) const RELKIND_LABEL: &str =
     "CASE c.relkind WHEN 'r' THEN 'table' WHEN 'p' THEN 'partitioned_table' \
      WHEN 'v' THEN 'view' WHEN 'm' THEN 'materialized_view' WHEN 'f' THEN 'foreign_table' END";
 

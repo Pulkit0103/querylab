@@ -275,6 +275,65 @@ of SQL text. Use a role with only `SELECT` grants for defence in depth.
   output columns and memory. The raw JSON plan is one click away and can be
   copied.
 
+## Table Editor (Data Studio)
+
+The **Table Editor** (`/tables`, or **Open in Data Studio** on a table in the
+explorer) browses and edits table rows without writing SQL.
+
+- **Browsing:**
+  - Pages are fetched by the server: 50 to 1,000 rows per page.
+  - Tables with a primary key (or a unique key whose columns are all
+    NOT NULL) use keyset pagination when sorted by that key. Other sorts,
+    and views, use offset pages with the key as a tiebreaker.
+  - The first page reports the matching row count, counted up to 10,000
+    and estimated beyond that.
+  - Quick search matches any column as text; LIKE wildcards in the term are
+    literal.
+- **Filter builder:** column, operator and value rows combined with
+  AND/OR groups, nested up to three levels. Operators:
+  `= != > >= < <= like ilike in between is_null is_not_null`. The SQL
+  shown under the builder is rendered by the server from the same model it
+  executes.
+- **Editing:**
+  - Double-click a cell to edit it. Editors depend on the type: text,
+    numbers, booleans and enums as lists, JSON in a larger box, with a NULL
+    button for nullable columns.
+  - **+ Row** adds a new row; columns left empty use their default.
+  - The trash icon marks a row for deletion.
+  - Generated columns, identity `ALWAYS` columns, arrays and `bytea` are
+    read-only.
+- **Applying:**
+  - Changes are staged. **Review SQL** shows each generated statement, and
+    **Apply** runs them in one transaction: deletes, then updates, then
+    inserts.
+  - Each update and delete must match exactly one row by its key, and
+    every edited cell must still hold the value that was loaded.
+    Otherwise everything is rolled back and the failing row is
+    highlighted.
+  - Editing requires a read-write connection, a row key and the matching
+    table privilege.
+  - Production connections require typing the connection name; staging
+    connections ask for confirmation.
+  - Every apply is recorded in query history with its statements.
+- **Columns, copying and export:**
+  - Hidden columns are remembered per table in the browser.
+  - Ctrl+C copies the focused cell. Selected rows (or the page) copy as
+    TSV or JSON.
+  - **Export** streams CSV, JSON or SQL `INSERT` statements for all
+    matching rows (up to 100,000) or for the selected rows, with the
+    visible columns.
+  - CSV text that a spreadsheet would run as a formula is prefixed with
+    `'`.
+
+**How values stay safe** (`backend/src/services/sql_builder.rs`):
+
+- Column names are checked against the live catalog and quoted.
+- Every value is bound as a text parameter and cast to the column's
+  catalog type, e.g. `CAST($1 AS integer)`. PostgreSQL's own input
+  functions parse it.
+- Rows are read as text, so keys, cursors and the stale-value check
+  compare exactly what was loaded.
+
 ## Security and operations
 
 - **Response hardening:** every response carries the following headers.
@@ -385,6 +444,10 @@ of SQL text. Use a role with only `SELECT` grants for defence in depth.
 | GET    | `/api/connections/{id}/triggers?schema=&table=` | Triggers with timing, events and definition |
 | GET    | `/api/connections/{id}/objects?schema=` | Sequences and user-defined types |
 | GET    | `/api/connections/{id}/search?q=` | Search tables, columns and functions |
+| POST   | `/api/connections/{id}/data/browse` | One page of rows: `{schema, table, filter, sort, search, page_size, cursor}` |
+| POST   | `/api/connections/{id}/data/preview` | SQL for a filter and/or change set, without running it |
+| POST   | `/api/connections/{id}/data/apply` | Apply a change set in one transaction: `{schema, table, changes, confirm}` |
+| POST   | `/api/connections/{id}/data/export` | Stream rows as CSV, JSON or SQL `INSERT` statements |
 | POST   | `/api/query/execute`      | Execute one SQL statement                |
 | POST   | `/api/query/explain`      | EXPLAIN / EXPLAIN ANALYZE (JSON plan)    |
 | POST   | `/api/query/{execution_id}/cancel` | Cancel a running execution      |

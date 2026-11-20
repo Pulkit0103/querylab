@@ -16,6 +16,8 @@ use crate::{
 };
 
 const MAX_ERROR_MESSAGE_CHARS: usize = 2000;
+/// Matches the `query_history_sql_length` check constraint.
+const MAX_HISTORY_SQL_BYTES: usize = 1_048_576;
 
 pub struct LibraryService<'a> {
     state: &'a AppState,
@@ -101,6 +103,45 @@ impl<'a> LibraryService<'a> {
                 None
             }
         }
+    }
+
+    /// Records a generated script (for example a Data Studio apply). The SQL
+    /// is truncated to the history size limit. Failures are only logged.
+    pub async fn record_script(
+        &self,
+        user_id: Uuid,
+        connection_id: Uuid,
+        sql: &str,
+        execution_time_ms: u64,
+        row_count: Option<i64>,
+        error: Option<&str>,
+    ) -> Option<Uuid> {
+        let mut end = sql.len().min(MAX_HISTORY_SQL_BYTES);
+        while !sql.is_char_boundary(end) {
+            end -= 1;
+        }
+        let error_message: Option<String> =
+            error.map(|m| m.chars().take(MAX_ERROR_MESSAGE_CHARS).collect());
+        let status = if error.is_some() {
+            HistoryStatus::Error
+        } else {
+            HistoryStatus::Success
+        };
+        repo::insert_history(
+            &self.state.db,
+            &NewHistory {
+                user_id,
+                connection_id,
+                sql: &sql[..end],
+                execution_time_ms: execution_time_ms as i64,
+                status,
+                error_message: error_message.as_deref(),
+                row_count,
+            },
+        )
+        .await
+        .map_err(|e| tracing::warn!(error = %e, "failed to record history"))
+        .ok()
     }
 
     pub async fn history(&self, user_id: Uuid, q: &HistoryQuery) -> AppResult<HistoryPage> {

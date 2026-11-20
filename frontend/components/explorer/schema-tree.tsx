@@ -67,6 +67,8 @@ interface SchemaTreeProps {
   onSelectTable?: (schema: string, table: string) => void;
   onSelectObject?: (object: ExplorerObject) => void;
   onPreviewTable?: (schema: string, table: string) => void;
+  /** Opens the table in the Table Editor (Data Studio). */
+  onOpenStudio?: (schema: string, table: string) => void;
   /** Opens generated SQL (SELECT, INSERT, DDL) in a new editor tab. */
   onOpenSql?: (title: string, sql: string) => void;
 }
@@ -188,11 +190,13 @@ function TableMenuItems({
   connectionId,
   table,
   onPreview,
+  onOpenStudio,
   onOpenSql,
 }: {
   connectionId: string;
   table: TableInfo;
   onPreview?: () => void;
+  onOpenStudio?: () => void;
   onOpenSql?: (title: string, sql: string) => void;
 }) {
   const qc = useQueryClient();
@@ -213,6 +217,11 @@ function TableMenuItems({
       {onPreview && (
         <DropdownMenuItem onClick={onPreview}>
           <Play /> View records
+        </DropdownMenuItem>
+      )}
+      {onOpenStudio && (
+        <DropdownMenuItem onClick={onOpenStudio}>
+          <Table2 /> Open in Data Studio
         </DropdownMenuItem>
       )}
       {onOpenSql && (
@@ -271,6 +280,7 @@ function TableNode({
   active,
   onSelect,
   onPreview,
+  onOpenStudio,
   onOpenSql,
 }: {
   connectionId: string;
@@ -279,12 +289,13 @@ function TableNode({
   active: boolean;
   onSelect?: () => void;
   onPreview?: () => void;
+  onOpenStudio?: () => void;
   onOpenSql?: (title: string, sql: string) => void;
 }) {
   const [open, setOpen] = useState(false);
   const isView = table.kind === "view" || table.kind === "materialized_view";
   const Icon = isView ? Eye : Table2;
-  const items = <TableMenuItems connectionId={connectionId} table={table} onPreview={onPreview} onOpenSql={onOpenSql} />;
+  const items = <TableMenuItems connectionId={connectionId} table={table} onPreview={onPreview} onOpenStudio={onOpenStudio} onOpenSql={onOpenSql} />;
 
   return (
     <div>
@@ -447,6 +458,7 @@ export function SchemaTree({
   onSelectTable,
   onSelectObject,
   onPreviewTable,
+  onOpenStudio,
   onOpenSql,
 }: SchemaTreeProps) {
   const queryClient = useQueryClient();
@@ -558,6 +570,7 @@ export function SchemaTree({
                 active={!selectedObject && selected?.schema === t.schema && selected?.name === t.name}
                 onSelect={onSelectTable ? () => onSelectTable(t.schema, t.name) : undefined}
                 onPreview={onPreviewTable ? () => onPreviewTable(t.schema, t.name) : undefined}
+                onOpenStudio={onOpenStudio ? () => onOpenStudio(t.schema, t.name) : undefined}
                 onOpenSql={onOpenSql}
               />
             );
