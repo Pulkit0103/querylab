@@ -27,6 +27,7 @@ async fn run() -> Result<(), Box<dyn std::error::Error>> {
     }
 
     querylab_api::services::auth::spawn_session_cleanup(pool.clone());
+    querylab_api::services::library::spawn_history_retention(pool.clone());
 
     let addr = config.bind_addr;
     let app = build_router(AppState::new(config, pool));

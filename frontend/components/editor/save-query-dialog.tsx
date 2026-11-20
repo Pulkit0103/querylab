@@ -8,12 +8,11 @@ import { Button } from "@/components/ui/button";
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
-import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Textarea } from "@/components/ui/textarea";
-import { useCollections, useCreateSavedQuery } from "@/hooks/use-library";
+import { FolderSelect } from "@/components/library/folder-select";
+import { TagEditor } from "@/components/library/tag-editor";
+import { useCollections, useCreateSavedQuery, useTags } from "@/hooks/use-library";
 import type { SavedQuery } from "@/types/library";
-
-const NONE = "__none__";
 
 function SaveForm({
   defaultName,
@@ -28,11 +27,11 @@ function SaveForm({
 }) {
   const [name, setName] = useState(defaultName);
   const [description, setDescription] = useState("");
-  const [collection, setCollection] = useState<string>(NONE);
+  const [collection, setCollection] = useState<string | null>(null);
+  const [tags, setTags] = useState<string[]>([]);
   const collections = useCollections();
+  const allTags = useTags();
   const create = useCreateSavedQuery();
-
-  const items = [{ value: NONE, label: "No collection" }, ...(collections.data ?? []).map((c) => ({ value: c.id, label: c.name }))];
 
   const submit = (e: FormEvent) => {
     e.preventDefault();
@@ -42,7 +41,8 @@ function SaveForm({
         description: description.trim() || null,
         sql_content: sql,
         connection_id: connectionId,
-        collection_id: collection === NONE ? null : collection,
+        collection_id: collection,
+        tags,
       },
       {
         onSuccess: (saved) => {
@@ -71,19 +71,12 @@ function SaveForm({
         />
       </div>
       <div className="space-y-1.5">
-        <Label htmlFor="sq-collection">Collection</Label>
-        <Select items={items} value={collection} onValueChange={(v) => setCollection(String(v ?? NONE))}>
-          <SelectTrigger id="sq-collection" className="w-full">
-            <SelectValue />
-          </SelectTrigger>
-          <SelectContent>
-            {items.map((i) => (
-              <SelectItem key={i.value} value={i.value}>
-                {i.label}
-              </SelectItem>
-            ))}
-          </SelectContent>
-        </Select>
+        <Label htmlFor="sq-collection">Folder</Label>
+        <FolderSelect id="sq-collection" folders={collections.data ?? []} value={collection} onChange={setCollection} />
+      </div>
+      <div className="space-y-1.5">
+        <Label htmlFor="sq-tags">Tags</Label>
+        <TagEditor id="sq-tags" value={tags} onChange={setTags} suggestions={(allTags.data ?? []).map((t) => t.tag)} />
       </div>
       {create.error && <p className="text-sm text-destructive">{create.error.message}</p>}
       <DialogFooter>

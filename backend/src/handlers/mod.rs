@@ -9,6 +9,7 @@ pub mod library;
 pub mod query;
 pub mod schema;
 pub mod version;
+pub mod workspace;
 
 use crate::errors::AppError;
 

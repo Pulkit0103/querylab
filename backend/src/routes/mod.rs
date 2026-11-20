@@ -27,7 +27,7 @@ use crate::{
 const MAX_BODY_BYTES: usize = 2 * 1024 * 1024;
 
 pub fn build_router(state: AppState) -> Router {
-    use handlers::{auth, connections, data, library, query, schema};
+    use handlers::{auth, connections, data, library, query, schema, workspace};
 
     let api = Router::new()
         .route("/health", get(handlers::health::health))
@@ -103,6 +103,10 @@ pub fn build_router(state: AppState) -> Router {
             "/history/{id}",
             get(library::get_history).delete(library::delete_history),
         )
+        .route(
+            "/history/{id}/pin",
+            axum::routing::put(library::pin_history),
+        )
         // Saved queries and collections
         .route(
             "/queries",
@@ -114,15 +118,26 @@ pub fn build_router(state: AppState) -> Router {
                 .put(library::update_saved)
                 .delete(library::delete_saved),
         )
+        .route("/queries/{id}/pin", axum::routing::put(library::pin_saved))
+        .route("/tags", get(library::tags))
         .route(
             "/collections",
             get(library::list_collections).post(library::create_collection),
         )
         .route(
             "/collections/{id}",
-            axum::routing::put(library::rename_collection).delete(library::delete_collection),
+            axum::routing::put(library::update_collection).delete(library::delete_collection),
         )
-        .route("/stats", get(library::stats));
+        .route("/stats", get(library::stats))
+        // Workspace
+        .route(
+            "/workspace/tabs",
+            get(workspace::get_tabs).put(workspace::put_tabs),
+        )
+        .route(
+            "/workspace/settings",
+            get(workspace::get_settings).put(workspace::put_settings),
+        );
 
     // HSTS only makes sense when the API is served over HTTPS, which is
     // exactly when Secure cookies are enabled.

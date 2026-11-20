@@ -1,19 +1,72 @@
 //! Query history, saved queries, collections and usage statistics.
 
+use std::time::Duration;
+
+use sqlx::PgPool;
 use uuid::Uuid;
 
 use crate::{
-    database::library::{self as repo, HistoryFilter, NewHistory, SavedQueryRow},
+    database::library::{
+        self as repo, FolderRejection, HistoryFilter, NewHistory, SavedFilter, SavedQueryRow,
+    },
     errors::{AppError, AppResult},
     models::{
         library::{
-            Collection, CreateSavedQuery, HistoryEntry, HistoryPage, HistoryQuery, HistoryStatus,
-            SavedQuery, SavedQueryFilter, StatsResponse, UpdateSavedQuery,
+            normalize_tags, Collection, CreateSavedQuery, HistoryEntry, HistoryKind, HistoryPage,
+            HistoryQuery, HistoryStatus, SavedQuery, SavedQueryFilter, StatsResponse, TagCount,
+            UpdateCollectionRequest, UpdateSavedQuery, MAX_FOLDER_DEPTH,
         },
         query::QueryResult,
     },
     state::AppState,
 };
+
+/// How often expired history is pruned, and how much per statement.
+const RETENTION_INTERVAL: Duration = Duration::from_secs(3600);
+const RETENTION_BATCH: i64 = 5000;
+
+/// Deletes unpinned history older than each user's retention setting, in
+/// batches so a large backlog never holds long locks.
+pub async fn prune_history(db: &PgPool) -> Result<u64, sqlx::Error> {
+    let mut total = 0;
+    loop {
+        let removed = repo::prune_history_batch(db, RETENTION_BATCH).await?;
+        total += removed;
+        if removed < RETENTION_BATCH as u64 {
+            return Ok(total);
+        }
+    }
+}
+
+/// Runs [`prune_history`] periodically.
+pub fn spawn_history_retention(db: PgPool) {
+    tokio::spawn(async move {
+        let mut interval = tokio::time::interval(RETENTION_INTERVAL);
+        loop {
+            interval.tick().await;
+            match prune_history(&db).await {
+                Ok(n) if n > 0 => tracing::info!(removed = n, "expired history pruned"),
+                Ok(_) => {}
+                Err(e) => tracing::warn!(error = %e, "history pruning failed"),
+            }
+        }
+    });
+}
+
+fn folder_error(rejection: FolderRejection) -> AppError {
+    match rejection {
+        FolderRejection::NotFound => AppError::NotFound("collection"),
+        FolderRejection::ParentNotFound => AppError::NotFound("parent folder"),
+        FolderRejection::Cycle => AppError::validation(
+            "parent_id",
+            "a folder cannot be moved into itself or one of its subfolders",
+        ),
+        FolderRejection::TooDeep => AppError::validation(
+            "parent_id",
+            format!("folders can be nested at most {MAX_FOLDER_DEPTH} levels deep"),
+        ),
+    }
+}
 
 const MAX_ERROR_MESSAGE_CHARS: usize = 2000;
 /// Matches the `query_history_sql_length` check constraint.
@@ -93,6 +146,7 @@ impl<'a> LibraryService<'a> {
                 status,
                 error_message: error_message.as_deref(),
                 row_count,
+                kind: HistoryKind::Query,
             },
         )
         .await
@@ -107,10 +161,12 @@ impl<'a> LibraryService<'a> {
 
     /// Records a generated script (for example a Data Studio apply). The SQL
     /// is truncated to the history size limit. Failures are only logged.
+    #[allow(clippy::too_many_arguments)]
     pub async fn record_script(
         &self,
         user_id: Uuid,
         connection_id: Uuid,
+        kind: HistoryKind,
         sql: &str,
         execution_time_ms: u64,
         row_count: Option<i64>,
@@ -137,6 +193,7 @@ impl<'a> LibraryService<'a> {
                 status,
                 error_message: error_message.as_deref(),
                 row_count,
+                kind,
             },
         )
         .await
@@ -153,7 +210,13 @@ impl<'a> LibraryService<'a> {
             &HistoryFilter {
                 connection_id: q.connection_id,
                 status: q.status,
+                kind: q.kind,
                 search,
+                min_ms: q.min_ms,
+                max_ms: q.max_ms,
+                from: q.from,
+                to: q.to,
+                pinned: q.pinned,
                 before: q.before,
                 limit: limit + 1,
             },
@@ -174,6 +237,18 @@ impl<'a> LibraryService<'a> {
             .ok_or(AppError::NotFound("history entry"))
     }
 
+    pub async fn pin_history(
+        &self,
+        user_id: Uuid,
+        id: Uuid,
+        pinned: bool,
+    ) -> AppResult<HistoryEntry> {
+        if !repo::set_history_pinned(&self.state.db, user_id, id, pinned).await? {
+            return Err(AppError::NotFound("history entry"));
+        }
+        self.history_entry(user_id, id).await
+    }
+
     pub async fn delete_history(&self, user_id: Uuid, id: Uuid) -> AppResult<()> {
         if repo::delete_history(&self.state.db, user_id, id).await? {
             Ok(())
@@ -192,22 +267,35 @@ impl<'a> LibraryService<'a> {
         Ok(repo::list_collections(&self.state.db, user_id).await?)
     }
 
-    pub async fn create_collection(&self, user_id: Uuid, name: &str) -> AppResult<Collection> {
-        repo::insert_collection(&self.state.db, user_id, name.trim())
+    pub async fn create_collection(
+        &self,
+        user_id: Uuid,
+        name: &str,
+        parent_id: Option<Uuid>,
+    ) -> AppResult<Collection> {
+        repo::insert_collection(&self.state.db, user_id, name.trim(), parent_id)
             .await
-            .map_err(reference_error)
+            .map_err(reference_error)?
+            .map_err(folder_error)
     }
 
-    pub async fn rename_collection(
+    /// Renames and/or moves a folder; moves are checked for cycles and depth.
+    pub async fn update_collection(
         &self,
         user_id: Uuid,
         id: Uuid,
-        name: &str,
+        req: &UpdateCollectionRequest,
     ) -> AppResult<Collection> {
-        repo::rename_collection(&self.state.db, user_id, id, name.trim())
-            .await
-            .map_err(reference_error)?
-            .ok_or(AppError::NotFound("collection"))
+        repo::update_collection(
+            &self.state.db,
+            user_id,
+            id,
+            req.name.as_deref().map(str::trim),
+            req.parent_id,
+        )
+        .await
+        .map_err(reference_error)?
+        .map_err(folder_error)
     }
 
     pub async fn delete_collection(&self, user_id: Uuid, id: Uuid) -> AppResult<()> {
@@ -226,7 +314,28 @@ impl<'a> LibraryService<'a> {
         f: &SavedQueryFilter,
     ) -> AppResult<Vec<SavedQuery>> {
         let search = f.q.as_deref().map(str::trim).filter(|s| !s.is_empty());
-        Ok(repo::list_saved(&self.state.db, user_id, f.collection_id, search).await?)
+        let tags = f.tag_list();
+        Ok(repo::list_saved(
+            &self.state.db,
+            user_id,
+            &SavedFilter {
+                collection_id: f.collection_id,
+                search,
+                tags: &tags,
+                pinned: f.pinned,
+            },
+        )
+        .await?)
+    }
+
+    pub async fn pin_saved(&self, user_id: Uuid, id: Uuid, pinned: bool) -> AppResult<SavedQuery> {
+        repo::set_saved_pinned(&self.state.db, user_id, id, pinned)
+            .await?
+            .ok_or(AppError::NotFound("saved query"))
+    }
+
+    pub async fn tags(&self, user_id: Uuid) -> AppResult<Vec<TagCount>> {
+        Ok(repo::list_tags(&self.state.db, user_id).await?)
     }
 
     pub async fn saved_query(&self, user_id: Uuid, id: Uuid) -> AppResult<SavedQuery> {
@@ -245,6 +354,7 @@ impl<'a> LibraryService<'a> {
             .as_deref()
             .map(str::trim)
             .filter(|d| !d.is_empty());
+        let tags = normalize_tags(&req.tags);
         repo::insert_saved(
             &self.state.db,
             &SavedQueryRow {
@@ -255,6 +365,7 @@ impl<'a> LibraryService<'a> {
                 sql_content: &req.sql_content,
                 connection_id: req.connection_id,
                 collection_id: req.collection_id,
+                tags: &tags,
             },
         )
         .await
@@ -272,6 +383,10 @@ impl<'a> LibraryService<'a> {
             Some(d) => d.as_deref().map(str::trim).filter(|d| !d.is_empty()),
             None => existing.description.as_deref(),
         };
+        let tags = match &req.tags {
+            Some(tags) => normalize_tags(tags),
+            None => existing.tags.clone(),
+        };
         repo::update_saved(
             &self.state.db,
             &SavedQueryRow {
@@ -282,6 +397,7 @@ impl<'a> LibraryService<'a> {
                 sql_content: req.sql_content.as_deref().unwrap_or(&existing.sql_content),
                 connection_id: req.connection_id.unwrap_or(existing.connection_id),
                 collection_id: req.collection_id.unwrap_or(existing.collection_id),
+                tags: &tags,
             },
         )
         .await

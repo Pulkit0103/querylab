@@ -5,23 +5,28 @@ import { useInfiniteQuery, useMutation, useQuery, useQueryClient } from "@tansta
 import { api, ApiError } from "@/lib/api-client";
 import type {
   Collection,
+  HistoryEntry,
+  HistoryFilters,
   HistoryPage,
-  HistoryStatus,
   SavedQuery,
   SavedQueryInput,
   Stats,
+  TagCount,
+  WorkspaceSettings,
 } from "@/types/library";
 
 export const libraryKeys = {
   history: (filters: object) => ["history", filters] as const,
   saved: (filters: object) => ["saved", filters] as const,
   collections: ["collections"] as const,
+  tags: ["tags"] as const,
   stats: (days: number) => ["stats", days] as const,
+  settings: ["workspace-settings"] as const,
 };
 
 // -- history ------------------------------------------------------------------
 
-export function useHistory(filters: { q?: string; status?: HistoryStatus; connection_id?: string }) {
+export function useHistory(filters: HistoryFilters, enabled = true) {
   return useInfiniteQuery<HistoryPage, ApiError>({
     queryKey: libraryKeys.history(filters),
     initialPageParam: undefined as string | undefined,
@@ -31,6 +36,7 @@ export function useHistory(filters: { q?: string; status?: HistoryStatus; connec
         query: { limit: 50, before: pageParam as string | undefined, ...filters },
       }),
     getNextPageParam: (last) => last.next_cursor ?? undefined,
+    enabled,
   });
 }
 
@@ -38,6 +44,14 @@ export function useDeleteHistory() {
   const qc = useQueryClient();
   return useMutation<void, ApiError, string>({
     mutationFn: (id) => api.delete<void>(`/api/history/${id}`),
+    onSuccess: () => void qc.invalidateQueries({ queryKey: ["history"] }),
+  });
+}
+
+export function usePinHistory() {
+  const qc = useQueryClient();
+  return useMutation<HistoryEntry, ApiError, { id: string; pinned: boolean }>({
+    mutationFn: ({ id, pinned }) => api.put<HistoryEntry>(`/api/history/${id}/pin`, { pinned }),
     onSuccess: () => void qc.invalidateQueries({ queryKey: ["history"] }),
   });
 }
@@ -55,16 +69,26 @@ export function useClearHistory() {
 
 // -- saved queries ------------------------------------------------------------
 
-export function useSavedQueries(filters: { q?: string; collection_id?: string }) {
+export interface SavedFilters {
+  q?: string;
+  collection_id?: string;
+  /** Comma-separated; queries must carry every tag. */
+  tags?: string;
+  pinned?: boolean;
+}
+
+export function useSavedQueries(filters: SavedFilters, enabled = true) {
   return useQuery<SavedQuery[], ApiError>({
     queryKey: libraryKeys.saved(filters),
-    queryFn: ({ signal }) => api.get<SavedQuery[]>("/api/queries", { signal, query: filters }),
+    queryFn: ({ signal }) => api.get<SavedQuery[]>("/api/queries", { signal, query: { ...filters } }),
+    enabled,
   });
 }
 
 function invalidateSaved(qc: ReturnType<typeof useQueryClient>) {
   void qc.invalidateQueries({ queryKey: ["saved"] });
   void qc.invalidateQueries({ queryKey: libraryKeys.collections });
+  void qc.invalidateQueries({ queryKey: libraryKeys.tags });
 }
 
 export function useCreateSavedQuery() {
@@ -83,6 +107,14 @@ export function useUpdateSavedQuery() {
   });
 }
 
+export function usePinSavedQuery() {
+  const qc = useQueryClient();
+  return useMutation<SavedQuery, ApiError, { id: string; pinned: boolean }>({
+    mutationFn: ({ id, pinned }) => api.put<SavedQuery>(`/api/queries/${id}/pin`, { pinned }),
+    onSuccess: () => void qc.invalidateQueries({ queryKey: ["saved"] }),
+  });
+}
+
 export function useDeleteSavedQuery() {
   const qc = useQueryClient();
   return useMutation<void, ApiError, string>({
@@ -91,7 +123,14 @@ export function useDeleteSavedQuery() {
   });
 }
 
-// -- collections --------------------------------------------------------------
+export function useTags() {
+  return useQuery<TagCount[], ApiError>({
+    queryKey: libraryKeys.tags,
+    queryFn: ({ signal }) => api.get<TagCount[]>("/api/tags", { signal }),
+  });
+}
+
+// -- folders ------------------------------------------------------------------
 
 export function useCollections() {
   return useQuery<Collection[], ApiError>({
@@ -102,16 +141,17 @@ export function useCollections() {
 
 export function useCreateCollection() {
   const qc = useQueryClient();
-  return useMutation<Collection, ApiError, string>({
-    mutationFn: (name) => api.post<Collection>("/api/collections", { name }),
+  return useMutation<Collection, ApiError, { name: string; parent_id?: string | null }>({
+    mutationFn: (body) => api.post<Collection>("/api/collections", body),
     onSuccess: () => void qc.invalidateQueries({ queryKey: libraryKeys.collections }),
   });
 }
 
-export function useRenameCollection() {
+/** Rename (`name`) and/or move (`parent_id`, null = top level). */
+export function useUpdateCollection() {
   const qc = useQueryClient();
-  return useMutation<Collection, ApiError, { id: string; name: string }>({
-    mutationFn: ({ id, name }) => api.put<Collection>(`/api/collections/${id}`, { name }),
+  return useMutation<Collection, ApiError, { id: string; name?: string; parent_id?: string | null }>({
+    mutationFn: ({ id, ...body }) => api.put<Collection>(`/api/collections/${id}`, body),
     onSuccess: () => void qc.invalidateQueries({ queryKey: libraryKeys.collections }),
   });
 }
@@ -124,11 +164,26 @@ export function useDeleteCollection() {
   });
 }
 
-// -- stats --------------------------------------------------------------------
+// -- stats and settings -------------------------------------------------------
 
 export function useStats(days = 14) {
   return useQuery<Stats, ApiError>({
     queryKey: libraryKeys.stats(days),
     queryFn: ({ signal }) => api.get<Stats>("/api/stats", { signal, query: { days } }),
+  });
+}
+
+export function useWorkspaceSettings() {
+  return useQuery<WorkspaceSettings, ApiError>({
+    queryKey: libraryKeys.settings,
+    queryFn: ({ signal }) => api.get<WorkspaceSettings>("/api/workspace/settings", { signal }),
+  });
+}
+
+export function useSaveWorkspaceSettings() {
+  const qc = useQueryClient();
+  return useMutation<WorkspaceSettings, ApiError, WorkspaceSettings>({
+    mutationFn: (body) => api.put<WorkspaceSettings>("/api/workspace/settings", body),
+    onSuccess: (data) => qc.setQueryData(libraryKeys.settings, data),
   });
 }

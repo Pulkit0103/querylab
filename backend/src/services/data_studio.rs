@@ -26,6 +26,7 @@ use crate::{
             BrowseResponse, ChangeKind, DataColumn, ExportFormat, ExportRequest, Pagination,
             PreviewRequest, PreviewResponse, PreviewStatement, DEFAULT_PAGE_SIZE,
         },
+        library::HistoryKind,
     },
     services::{
         auth::AuthUser,
@@ -604,6 +605,7 @@ impl<'a> DataStudioService<'a> {
             .record_script(
                 user.user_id,
                 connection_id,
+                HistoryKind::DataApply,
                 &script,
                 elapsed,
                 committed.then_some(rows_affected as i64),

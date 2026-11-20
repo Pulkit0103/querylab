@@ -66,6 +66,10 @@ interface EditorState {
   activeTabId: string;
   runtime: Record<string, TabRuntime>;
   untitledCounter: number;
+  /** User whose server session the local tabs mirror. */
+  syncOwner: string | null;
+  /** `updated_at` of the server session the local tabs were last synced with. */
+  syncedAt: string | null;
 
   newTab: (init?: Partial<Pick<EditorTab, "title" | "sql" | "savedQueryId">>) => string;
   openSavedQuery: (q: { id: string; name: string; sql: string }) => void;
@@ -74,6 +78,11 @@ interface EditorState {
   updateSql: (id: string, sql: string) => void;
   renameTab: (id: string, title: string) => void;
   markSaved: (id: string, savedQueryId: string, title: string) => void;
+  /** Replaces all tabs (e.g. with the session restored from the server). */
+  replaceTabs: (tabs: EditorTab[], activeTabId: string) => void;
+  /** Starts over with a single empty tab. */
+  resetTabs: () => void;
+  markSynced: (owner: string, at: string) => void;
 
   runtimeFor: (id: string) => TabRuntime;
   startExec: (id: string, kind: "execute" | "explain", executionId: string) => void;
@@ -102,6 +111,8 @@ export const useEditorStore = create<EditorState>()(
         activeTabId: first.id,
         runtime: {},
         untitledCounter: 1,
+        syncOwner: null,
+        syncedAt: null,
 
         newTab: (init) => {
           const counter = get().untitledCounter + 1;
@@ -153,6 +164,19 @@ export const useEditorStore = create<EditorState>()(
           set((s) => ({
             tabs: s.tabs.map((t) => (t.id === id ? { ...t, savedQueryId, title, savedSql: t.sql } : t)),
           })),
+
+        replaceTabs: (tabs, activeTabId) => {
+          if (tabs.length === 0) return;
+          const active = tabs.some((t) => t.id === activeTabId) ? activeTabId : tabs[0].id;
+          set({ tabs, activeTabId: active, runtime: {}, untitledCounter: Math.max(1, tabs.length) });
+        },
+
+        resetTabs: () => {
+          const fresh = { ...initialTab(), sql: "" };
+          set({ tabs: [fresh], activeTabId: fresh.id, runtime: {}, untitledCounter: 1 });
+        },
+
+        markSynced: (owner, at) => set({ syncOwner: owner, syncedAt: at }),
 
         runtimeFor: (id) => get().runtime[id] ?? emptyRuntime(),
 
@@ -209,7 +233,13 @@ export const useEditorStore = create<EditorState>()(
       version: 1,
       storage: createJSONStorage(() => localStorage),
       // Only persist editor content; results are transient and may be large.
-      partialize: (s) => ({ tabs: s.tabs, activeTabId: s.activeTabId, untitledCounter: s.untitledCounter }),
+      partialize: (s) => ({
+        tabs: s.tabs,
+        activeTabId: s.activeTabId,
+        untitledCounter: s.untitledCounter,
+        syncOwner: s.syncOwner,
+        syncedAt: s.syncedAt,
+      }),
     },
   ),
 );

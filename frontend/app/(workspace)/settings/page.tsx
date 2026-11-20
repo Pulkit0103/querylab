@@ -5,6 +5,7 @@ import { Plus } from "lucide-react";
 
 import { PageContainer, Section } from "@/components/common/page-container";
 import { ConnectionList } from "@/components/connections/connection-list";
+import { RetentionSetting } from "@/components/library/retention-setting";
 import { Button } from "@/components/ui/button";
 import { Label } from "@/components/ui/label";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
@@ -24,7 +25,7 @@ export default function SettingsPage() {
   const openConnectionDialog = useWorkspaceStore((s) => s.openConnectionDialog);
 
   return (
-    <PageContainer title="Settings" description="Preferences for this browser.">
+    <PageContainer title="Settings" description="Connections, preferences and account settings.">
       <div className="grid max-w-3xl gap-4">
         <section id="connections" className="scroll-mt-6 rounded-lg border bg-card">
           <div className="flex items-center justify-between border-b px-4 py-3">
@@ -56,6 +57,12 @@ export default function SettingsPage() {
               </SelectContent>
             </Select>
           </div>
+        </Section>
+        <Section
+          title="Query history"
+          description="Applies to your account on every device. History older than this is deleted automatically; pinned entries are always kept."
+        >
+          <RetentionSetting />
         </Section>
         <Section title="Query execution" description="The server enforces its own upper bound regardless of this value.">
           <div className="flex items-center justify-between gap-4">
