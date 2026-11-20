@@ -53,8 +53,9 @@
   --radius-4xl: calc(var(--radius) * 2.6);
 }
 
-/* Light theme */
-:root {
+/* Light theme (`.theme-light` forces it inside a dark page, e.g. for exports) */
+:root,
+.theme-light {
   --background: oklch(0.985 0.002 250);
   --foreground: oklch(0.2 0.01 260);
   --panel: oklch(1 0 0);

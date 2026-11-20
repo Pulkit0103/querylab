@@ -303,6 +303,29 @@ of SQL text. Use a role with only `SELECT` grants for defence in depth.
   (Settings, 90 days by default) is deleted hourly in batches. Pinned
   entries are kept.
 
+## ER diagrams
+
+**ER Diagrams** (`/diagrams`) draws a schema as tables and foreign keys.
+
+- **Relationships** use crow's foot notation. A foreign key is one-to-one
+  when a unique constraint or index (valid, not partial, no expressions)
+  covers a subset of its columns, otherwise one-to-many. A nullable foreign
+  key column makes the reference optional. Lines attach to the key columns.
+- **Scope:** one schema at a time, optionally with views. Schemas with more
+  than 150 tables open with the 150 most connected ones and a notice; the
+  **Tables** picker shows any selection of up to 500. Foreign keys to tables
+  that are not shown (other schemas or outside the selection) are counted,
+  not drawn.
+- **Layout:** automatic (ELK layered: referenced tables on the left) the
+  first time; dragged positions are saved per connection and schema and
+  restored on the next visit. **Reset layout** forgets them.
+- **Navigation:** zoom, pan, minimap, **Find table** (highlights the table
+  and its neighbours; Enter centres it), and clicking a table opens its
+  columns, indexes, constraints and DDL in a side panel.
+- **Export:** PNG, SVG, or PDF through the browser's print dialog, of the
+  whole diagram, in the current theme or on a light background. Everything
+  runs in the browser.
+
 ## Table Editor (Data Studio)
 
 The **Table Editor** (`/tables`, or **Open in Data Studio** on a table in the
@@ -472,6 +495,8 @@ explorer) browses and edits table rows without writing SQL.
 | GET    | `/api/connections/{id}/triggers?schema=&table=` | Triggers with timing, events and definition |
 | GET    | `/api/connections/{id}/objects?schema=` | Sequences and user-defined types |
 | GET    | `/api/connections/{id}/search?q=` | Search tables, columns and functions |
+| GET    | `/api/connections/{id}/schema-graph?schema=&tables=&include_views=&limit=` | Tables, keys and foreign keys with inferred cardinality |
+| GET/PUT/DELETE | `/api/connections/{id}/diagram-layouts/{schema}` | Saved diagram positions (`DELETE` resets the layout) |
 | POST   | `/api/connections/{id}/data/browse` | One page of rows: `{schema, table, filter, sort, search, page_size, cursor}` |
 | POST   | `/api/connections/{id}/data/preview` | SQL for a filter and/or change set, without running it |
 | POST   | `/api/connections/{id}/data/apply` | Apply a change set in one transaction: `{schema, table, changes, confirm}` |

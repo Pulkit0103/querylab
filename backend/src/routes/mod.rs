@@ -27,7 +27,7 @@ use crate::{
 const MAX_BODY_BYTES: usize = 2 * 1024 * 1024;
 
 pub fn build_router(state: AppState) -> Router {
-    use handlers::{auth, connections, data, library, query, schema, workspace};
+    use handlers::{auth, connections, data, diagrams, library, query, schema, workspace};
 
     let api = Router::new()
         .route("/health", get(handlers::health::health))
@@ -85,6 +85,14 @@ pub fn build_router(state: AppState) -> Router {
         .route("/connections/{id}/triggers", get(schema::triggers))
         .route("/connections/{id}/objects", get(schema::objects))
         .route("/connections/{id}/search", get(schema::search))
+        // ER diagrams
+        .route("/connections/{id}/schema-graph", get(diagrams::graph))
+        .route(
+            "/connections/{id}/diagram-layouts/{schema}",
+            get(diagrams::get_layout)
+                .put(diagrams::put_layout)
+                .delete(diagrams::delete_layout),
+        )
         // Data Studio
         .route("/connections/{id}/data/browse", post(data::browse))
         .route("/connections/{id}/data/preview", post(data::preview))

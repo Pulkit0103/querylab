@@ -3,6 +3,7 @@
 //! `services`. All statements are parameterised.
 
 pub mod connections;
+pub mod diagrams;
 pub mod library;
 pub mod sessions;
 pub mod users;
