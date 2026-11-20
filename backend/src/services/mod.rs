@@ -5,9 +5,11 @@
 
 pub mod auth;
 pub mod connections;
+pub mod data_studio;
 pub mod ddl;
 pub mod execution;
 pub mod library;
 pub mod schema;
+pub mod sql_builder;
 pub mod target_db;
 pub mod value_decode;

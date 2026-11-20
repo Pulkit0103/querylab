@@ -9,6 +9,7 @@ import { SchemaTree } from "@/components/explorer/schema-tree";
 import { TableDetails } from "@/components/explorer/table-details";
 import { Skeleton } from "@/components/ui/skeleton";
 import { useActiveConnection } from "@/hooks/use-connections";
+import { tableEditorHref } from "@/lib/data-studio";
 import type { ExplorerObject } from "@/lib/explorer";
 import { previewSql } from "@/lib/sql-ident";
 import { useEditorStore } from "@/stores/editor-store";
@@ -48,6 +49,7 @@ export default function ExplorerPage() {
           onSelectTable={select}
           onSelectObject={(value) => setObject({ connectionId: connection.id, value })}
           onPreviewTable={preview}
+          onOpenStudio={(schema, table) => router.push(tableEditorHref(schema, table))}
           onOpenSql={openSql}
         />
       </div>

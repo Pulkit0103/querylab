@@ -5,6 +5,7 @@ import {
   LayoutDashboard,
   Settings,
   SquareTerminal,
+  Table2,
   type LucideIcon,
 } from "lucide-react";
 
@@ -18,6 +19,7 @@ export const navItems: NavItem[] = [
   { href: "/dashboard", label: "Dashboard", icon: LayoutDashboard },
   { href: "/editor", label: "SQL Editor", icon: SquareTerminal },
   { href: "/explorer", label: "Database Explorer", icon: Database },
+  { href: "/tables", label: "Table Editor", icon: Table2 },
   { href: "/saved", label: "Saved Queries", icon: Bookmark },
   { href: "/history", label: "Query History", icon: History },
   { href: "/settings", label: "Settings", icon: Settings },

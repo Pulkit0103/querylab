@@ -298,11 +298,11 @@ introspection model (principle 5). **Status:** ✅ delivered.
 | Triggers | ✅ | Timing, events, level, function, enabled state, definition |
 | Materialized views, sequences, enums and domains | ✅ | Tree sections for tables, views, functions, sequences and types (also composite and range types) |
 | Search tables **and columns** | ✅ | Tree filter plus server-side search over tables, columns and functions; exact matches first |
-| Right-click table → view records | ✅ | Context menu on tables and views. **Open in Data Studio** is added in Phase 4. |
+| Right-click table → view records | ✅ | Context menu on tables and views, including **Open in Data Studio** (Phase 4). |
 | Copy table name | ✅ | |
 | Generate SELECT statement | ✅ | Explicit, quoted column list in a new tab |
 | Generate CREATE TABLE statement | ✅ | Identity and generated columns, collations, constraints, indexes, triggers and comments; views and materialized views. Verified by a round-trip test. |
-| Generate INSERT/UPDATE templates | ◐ | INSERT template with typed placeholders. UPDATE templates come with the Data Studio change sets (Phase 4). |
+| Generate INSERT/UPDATE templates | ✅ | INSERT template with typed placeholders. UPDATE and DELETE statements are generated from Data Studio change sets (Phase 4). |
 
 **Frontend tasks**
 - Tree sections per schema: Tables, Views, Materialized Views, Functions,
@@ -368,7 +368,16 @@ client-side with TanStack Query.
 ## Phase 4 — Visual Table & Data Studio
 
 **Goal:** manage records without writing every query by hand.
-**Status:** ☐ new. **Priority:** high.
+**Status:** ✅ delivered. **Priority:** high.
+
+> **Implementation notes:**
+> - Values travel as PostgreSQL text: rows are read with `CAST(col AS text)`, and every bound value is cast to the column's catalog type (domains resolved, type modifiers dropped so over-long values raise errors instead of being truncated). Keys, cursors and the stale-value check therefore round-trip exactly for every scalar type.
+> - The stale-value check compares text forms: `CAST(col AS text) IS NOT DISTINCT FROM $n`. The UI always sends the loaded values of edited cells.
+> - A failed apply returns `200` with `committed: false` and the failing change (kind, index, conflict flag, SQL error), so the grid can highlight the row. Validation, guardrail and privilege errors use the normal error envelope.
+> - Statements run deletes, then updates, then inserts. A deferred-constraint failure at `COMMIT` is reported without a change index.
+> - Until Phase 5 adds `kind`, applies are recorded in `query_history` as a script whose first line is `-- Data Studio: N change(s) to schema.table`.
+> - Exports are capped at 100,000 rows. CSV export neutralises spreadsheet formulas, as the result grid already does.
+> - `bytea` cells show a hex preview of the first 2 KiB; `bytea` and array columns are read-only, as planned.
 
 | Feature | Notes |
 | --- | --- |
