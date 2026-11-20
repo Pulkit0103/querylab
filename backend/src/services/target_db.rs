@@ -176,7 +176,7 @@ pub fn map_connect_error(err: sqlx::Error, host: &str, port: u16) -> AppError {
             };
             AppError::TargetUnavailable(format!("could not connect to {host}:{port}: {reason}"))
         }
-        sqlx::Error::Tls(e) => AppError::TargetUnavailable(format!("TLS negotiation failed: {e}")),
+        sqlx::Error::Tls(e) => AppError::TargetUnavailable(tls_message(&e.to_string())),
         sqlx::Error::Protocol(_) => AppError::TargetUnavailable(
             "unexpected response from server (is this a PostgreSQL server?)".into(),
         ),
@@ -184,6 +184,17 @@ pub fn map_connect_error(err: sqlx::Error, host: &str, port: u16) -> AppError {
             tracing::warn!(error = %other, "unexpected target connection error");
             AppError::TargetUnavailable(format!("could not connect to {host}:{port}"))
         }
+    }
+}
+
+/// TLS failures with the setting to change when the cause is known.
+fn tls_message(error: &str) -> String {
+    if error.contains("does not support TLS") {
+        "TLS negotiation failed: the server does not accept encrypted connections. \
+         Set SSL mode to `prefer` or `disable` to connect without encryption."
+            .into()
+    } else {
+        format!("TLS negotiation failed: {error}")
     }
 }
 
@@ -317,4 +328,19 @@ pub async fn test_connection(
         read_only,
         warnings,
     })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn tls_errors_say_what_to_change() {
+        let plain = tls_message("server does not support TLS");
+        assert!(plain.contains("`prefer` or `disable`"), "{plain}");
+        assert_eq!(
+            tls_message("certificate has expired"),
+            "TLS negotiation failed: certificate has expired"
+        );
+    }
 }
