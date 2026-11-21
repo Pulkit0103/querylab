@@ -17,13 +17,13 @@ import {
 import { formatDuration, formatNumber } from "@/lib/format";
 import type { Stats } from "@/types/library";
 
-const AXIS = { fontSize: 11, fill: "var(--muted-foreground)" };
+export const AXIS = { fontSize: 11, fill: "var(--muted-foreground)" };
 
-function dayLabel(day: string) {
+export function dayLabel(day: string) {
   return new Date(`${day}T00:00:00Z`).toLocaleDateString(undefined, { month: "short", day: "numeric", timeZone: "UTC" });
 }
 
-function ChartTooltip({ active, payload, label, unit }: TooltipContentProps<number, string> & { unit: "count" | "ms" }) {
+export function ChartTooltip({ active, payload, label, unit }: TooltipContentProps<number, string> & { unit: "count" | "ms" }) {
   if (!active || !payload?.length) return null;
   return (
     <div className="rounded-md border bg-popover px-3 py-2 text-xs shadow-md">

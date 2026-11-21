@@ -5,9 +5,12 @@ use chrono::{DateTime, Utc};
 use sqlx::{PgPool, Postgres, Transaction};
 use uuid::Uuid;
 
-use crate::models::library::{
-    Collection, ConnectionUsage, DailyStats, HistoryEntry, HistoryKind, HistoryStatus, SavedQuery,
-    StatsTotals, TagCount, MAX_FOLDER_DEPTH,
+use crate::{
+    models::library::{
+        Collection, ConnectionUsage, DailyStats, HistoryEntry, HistoryKind, HistoryStatus,
+        SavedQuery, StatsTotals, TagCount, MAX_FOLDER_DEPTH,
+    },
+    utils::fingerprint::fingerprint,
 };
 
 /// Escapes LIKE/ILIKE wildcards so user search text matches literally.
@@ -41,8 +44,8 @@ pub async fn insert_history(db: &PgPool, h: &NewHistory<'_>) -> Result<Uuid, sql
     let id = Uuid::new_v4();
     sqlx::query(
         "INSERT INTO query_history \
-            (id, user_id, connection_id, sql_content, execution_time_ms, status, error_message, row_count, kind) \
-         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)",
+            (id, user_id, connection_id, sql_content, execution_time_ms, status, error_message, row_count, kind, fingerprint) \
+         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)",
     )
     .bind(id)
     .bind(h.user_id)
@@ -53,9 +56,37 @@ pub async fn insert_history(db: &PgPool, h: &NewHistory<'_>) -> Result<Uuid, sql
     .bind(h.error_message)
     .bind(h.row_count)
     .bind(h.kind.as_str())
+    .bind(fingerprint(h.sql))
     .execute(db)
     .await?;
     Ok(id)
+}
+
+/// Fingerprints up to `batch` history rows recorded before fingerprints
+/// existed. Returns how many rows were updated (0 when done).
+pub async fn backfill_fingerprints(db: &PgPool, batch: i64) -> Result<u64, sqlx::Error> {
+    let rows: Vec<(Uuid, String)> = sqlx::query_as(
+        "SELECT id, sql_content FROM query_history WHERE fingerprint IS NULL \
+         ORDER BY executed_at DESC LIMIT $1",
+    )
+    .bind(batch)
+    .fetch_all(db)
+    .await?;
+    if rows.is_empty() {
+        return Ok(0);
+    }
+    let ids: Vec<Uuid> = rows.iter().map(|(id, _)| *id).collect();
+    let fps: Vec<i64> = rows.iter().map(|(_, sql)| fingerprint(sql)).collect();
+    let done = sqlx::query(
+        "UPDATE query_history h SET fingerprint = v.fp \
+         FROM unnest($1::uuid[], $2::bigint[]) AS v(id, fp) \
+         WHERE h.id = v.id AND h.fingerprint IS NULL",
+    )
+    .bind(&ids)
+    .bind(&fps)
+    .execute(db)
+    .await?;
+    Ok(done.rows_affected())
 }
 
 #[derive(Default)]

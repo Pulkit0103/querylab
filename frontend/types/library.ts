@@ -1,7 +1,7 @@
 /** History, saved queries, collections and stats (mirrors `models::library`). */
 
 export type HistoryStatus = "success" | "error" | "cancelled" | "timeout";
-export type HistoryKind = "query" | "data_apply" | "migration" | "import";
+export type HistoryKind = "query" | "data_apply" | "migration" | "import" | "admin";
 
 export interface HistoryEntry {
   id: string;

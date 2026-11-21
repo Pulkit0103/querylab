@@ -37,9 +37,16 @@ export interface EditorTab {
   savedSql: string | null;
 }
 
+export interface PlanSource {
+  sql: string;
+  connectionId: string;
+}
+
 export interface TabRuntime {
   exec: ExecState;
   plan: ExplainResult | null;
+  /** Statement and connection the plan was produced for (for saving it). */
+  planSource: PlanSource | null;
   planError: ExecError | null;
   messages: Message[];
   view: ResultsView;
@@ -54,7 +61,7 @@ function newId(): string {
 }
 
 function emptyRuntime(): TabRuntime {
-  return { exec: { status: "idle" }, plan: null, planError: null, messages: [], view: "results" };
+  return { exec: { status: "idle" }, plan: null, planSource: null, planError: null, messages: [], view: "results" };
 }
 
 const DEFAULT_SQL = `-- Welcome to QueryLab. Press Ctrl+Enter to run.
@@ -88,7 +95,7 @@ interface EditorState {
   startExec: (id: string, kind: "execute" | "explain", executionId: string) => void;
   finishExec: (id: string, result: QueryResult) => void;
   failExec: (id: string, error: ExecError) => void;
-  finishExplain: (id: string, plan: ExplainResult) => void;
+  finishExplain: (id: string, plan: ExplainResult, source?: PlanSource) => void;
   failExplain: (id: string, error: ExecError) => void;
   addMessage: (id: string, msg: Omit<Message, "id" | "at">) => void;
   clearMessages: (id: string) => void;
@@ -200,11 +207,12 @@ export const useEditorStore = create<EditorState>()(
             view: "messages",
           })),
 
-        finishExplain: (id, plan) =>
+        finishExplain: (id, plan, source) =>
           updateRuntime(id, (rt) => ({
             ...rt,
             exec: rt.exec.status === "running" ? { status: "idle" } : rt.exec,
             plan,
+            planSource: source ?? null,
             planError: null,
             view: "plan",
           })),

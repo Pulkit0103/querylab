@@ -7,6 +7,9 @@ use crate::{
     utils::crypto::CredentialCipher,
 };
 
+/// Monitoring refreshes allowed per user, connection and view.
+pub const MONITOR_REFRESHES_PER_MINUTE: u32 = 30;
+
 /// Shared application state injected into every handler.
 #[derive(Clone)]
 pub struct AppState {
@@ -19,6 +22,8 @@ pub struct AppState {
     pub connect_limiter: Arc<RateLimiter>,
     /// Throttles query executions, per user.
     pub query_limiter: Arc<RateLimiter>,
+    /// Throttles monitoring refreshes, per user, connection and view.
+    pub monitor_limiter: Arc<RateLimiter>,
     /// Running executions (cancellation and concurrency limits).
     pub executions: Arc<ExecutionRegistry>,
 }
@@ -31,6 +36,8 @@ impl AppState {
         let auth_limiter = RateLimiter::new(config.auth_rate_limit_per_minute, minute);
         let connect_limiter = RateLimiter::new(config.target_connect_rate_limit_per_minute, minute);
         let query_limiter = RateLimiter::new(config.query_rate_limit_per_minute, minute);
+        // The UI refreshes every 5 s at most; leave room for manual refreshes.
+        let monitor_limiter = RateLimiter::new(MONITOR_REFRESHES_PER_MINUTE, minute);
         Self {
             config: Arc::new(config),
             db,
@@ -38,6 +45,7 @@ impl AppState {
             auth_limiter: Arc::new(auth_limiter),
             connect_limiter: Arc::new(connect_limiter),
             query_limiter: Arc::new(query_limiter),
+            monitor_limiter: Arc::new(monitor_limiter),
             executions: Arc::new(ExecutionRegistry::default()),
         }
     }

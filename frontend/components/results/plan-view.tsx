@@ -22,6 +22,7 @@ import {
 import { toast } from "sonner";
 
 import { EmptyState } from "@/components/common/empty-state";
+import { SavePlanButton } from "@/components/results/save-plan-button";
 import { Button } from "@/components/ui/button";
 import { formatDuration, formatNumber } from "@/lib/format";
 import {
@@ -287,7 +288,8 @@ function PlanNodeRow({ n, analyzed, tree }: { n: AnalyzedNode; analyzed: boolean
   );
 }
 
-function PlanExplorer({ result }: { result: ExplainResult }) {
+/** Plan summary, tree and JSON views. `actions` go in the toolbar. */
+export function PlanExplorer({ result, actions }: { result: ExplainResult; actions?: ReactNode }) {
   const analysis = useMemo(() => analyzePlan(result.plan, result.analyzed), [result]);
   const [mode, setMode] = useState<"tree" | "json">("tree");
   const [collapsed, setCollapsed] = useState<Set<number>>(() => new Set());
@@ -328,9 +330,9 @@ function PlanExplorer({ result }: { result: ExplainResult }) {
   };
 
   return (
-    <div className="flex h-full min-h-0 flex-col text-xs">
+    <div className="@container flex h-full min-h-0 flex-col text-xs">
       <PlanSummary result={result} analysis={analysis} onJump={jumpTo} />
-      <div className="flex shrink-0 items-center gap-1 border-b px-2 py-1">
+      <div className="flex shrink-0 flex-wrap items-center gap-1 border-b px-2 py-1">
         <Button
           variant={mode === "tree" ? "secondary" : "ghost"}
           size="xs"
@@ -364,22 +366,25 @@ function PlanExplorer({ result }: { result: ExplainResult }) {
             </Button>
           </>
         )}
-        <span className="ml-auto hidden text-muted-foreground md:inline">
-          {result.analyzed ? "estimated → actual rows · self time · share of time" : "estimated rows · self cost · share of cost"}
-        </span>
-        <Button
-          variant="ghost"
-          size="xs"
-          className="gap-1"
-          onClick={() =>
-            void navigator.clipboard.writeText(json).then(
-              () => toast.success("Plan JSON copied"),
-              () => toast.error("Clipboard access was denied by the browser."),
-            )
-          }
-        >
-          <Copy className="size-3.5" /> Copy JSON
-        </Button>
+        <div className="ml-auto flex items-center gap-1">
+          <span className="mr-2 hidden text-muted-foreground @3xl:inline">
+            {result.analyzed ? "estimated → actual rows · self time · share of time" : "estimated rows · self cost · share of cost"}
+          </span>
+          {actions}
+          <Button
+            variant="ghost"
+            size="xs"
+            className="gap-1"
+            onClick={() =>
+              void navigator.clipboard.writeText(json).then(
+                () => toast.success("Plan JSON copied"),
+                () => toast.error("Clipboard access was denied by the browser."),
+              )
+            }
+          >
+            <Copy className="size-3.5" /> Copy JSON
+          </Button>
+        </div>
       </div>
       {mode === "tree" ? (
         <ul className="min-h-0 flex-1 overflow-auto p-2 scrollbar-thin" aria-label="Execution plan">
@@ -413,7 +418,13 @@ export function PlanView({ runtime }: { runtime: TabRuntime }) {
     );
   }
   // Remount per plan so expansion state starts fresh for each EXPLAIN.
-  return <PlanExplorer key={planKey(runtime.plan)} result={runtime.plan} />;
+  return (
+    <PlanExplorer
+      key={planKey(runtime.plan)}
+      result={runtime.plan}
+      actions={runtime.planSource && <SavePlanButton plan={runtime.plan} source={runtime.planSource} />}
+    />
+  );
 }
 
 const planKeys = new WeakMap<ExplainResult, number>();
