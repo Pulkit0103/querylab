@@ -628,19 +628,29 @@ CREATE TABLE diagram_layouts (
 ## Phase 7 — Query Performance & Monitoring
 
 **Goal:** understand and troubleshoot database performance.
+**Status:** ✅ delivered.
+
+> **Implementation notes:**
+> - No dependency was added; charts reuse Recharts and the dashboard palette.
+> - Fingerprints are 64-bit FNV-1a hashes of the normalised text, sent to clients as strings. Function calls render without a space (`count(*)`), keywords with one (`in (?)`). Existing history is fingerprinted at API startup in batches of 1000.
+> - Timelines use successful editor queries; failures are counted separately. Days are UTC.
+> - `top-queries` returns `200` with `available: false` and a reason (extension missing, not preloaded, or unreadable) instead of `404`, so the page can explain it like other privilege limits.
+> - Cancel and terminate are recorded as history entries of a new kind, `admin`, including refusals by PostgreSQL. Requests rejected before reaching the server (read-only connection, missing confirmation) are not recorded.
+> - Sizes list leaf tables and materialized views (partitions individually); bloat is shown as the dead-tuple share from `pg_stat_all_tables` rather than an estimate.
+> - Monitoring refreshes are limited to 30 per minute per user, connection and view (on top of the per-user connect limit).
 
 | Feature | Status | Notes |
 | --- | --- | --- |
 | EXPLAIN; EXPLAIN ANALYZE with confirmation | ✅ | |
 | Visual plan tree; sequential and index scan detection; join analysis | ✅ | Hot nodes, misestimates, spill warnings |
 | Query execution duration; slow query identification | ✅ | Dashboard shows the slowest queries |
-| Query performance history | ◐ | **Add:** per-query timelines, grouped by normalized SQL fingerprint, showing p50/p95 over time |
-| Plan comparison | ☐ | Compare two saved plans side by side |
-| Server statistics from `pg_stat_statements` | ☐ | Top queries by total and mean time, when the extension is visible |
-| Active database connections | ☐ | `pg_stat_activity`: state, wait events, durations, query text (truncated) |
-| Database size statistics | ☐ | Database, schema, table and index sizes; bloat estimate (optional) |
-| Lock and blocking session inspection | ☐ | `pg_locks` plus `pg_blocking_pids()` as a blocking tree |
-| Cancel or terminate a backend | ☐ | Privileged: writable connection, confirmation and the right role |
+| Query performance history | ✅ | Per-query timelines grouped by normalized SQL fingerprint, showing p50/p95 over time |
+| Plan comparison | ✅ | Compare two saved plans side by side |
+| Server statistics from `pg_stat_statements` | ✅ | Top queries by total and mean time, when the extension is visible |
+| Active database connections | ✅ | `pg_stat_activity`: state, wait events, durations, query text (truncated) |
+| Database size statistics | ✅ | Database, schema, table and index sizes; dead-tuple share |
+| Lock and blocking session inspection | ✅ | `pg_locks` plus `pg_blocking_pids()` as a blocking tree |
+| Cancel or terminate a backend | ✅ | Privileged: writable connection, confirmation and the right role |
 
 **Design notes**
 - Monitoring queries are read-only and bounded. Results depend on the

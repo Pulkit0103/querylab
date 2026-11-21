@@ -53,6 +53,7 @@ const KINDS = [
   { value: "all", label: "All activity" },
   { value: "query", label: "Editor queries" },
   { value: "data_apply", label: "Data Studio changes" },
+  { value: "admin", label: "Admin actions" },
 ];
 
 const FILTERS = [
@@ -100,6 +101,9 @@ function HistoryRow({ entry }: { entry: HistoryEntry }) {
       <div className="min-w-0 flex-1">
         {entry.kind === "data_apply" && (
           <span className="mb-1 inline-block rounded bg-chart-2/15 px-1.5 py-0.5 text-[10px] font-medium text-chart-2">Data Studio</span>
+        )}
+        {entry.kind === "admin" && (
+          <span className="mb-1 inline-block rounded bg-warning/15 px-1.5 py-0.5 text-[10px] font-medium text-warning">Admin action</span>
         )}
         <pre className="line-clamp-3 font-mono text-xs break-all whitespace-pre-wrap text-foreground">{entry.sql_content}</pre>
         {entry.error_message && <p className="mt-1 line-clamp-2 text-xs text-destructive">{entry.error_message}</p>}

@@ -10,6 +10,8 @@ pub mod ddl;
 pub mod diagrams;
 pub mod execution;
 pub mod library;
+pub mod monitoring;
+pub mod performance;
 pub mod schema;
 pub mod sql_builder;
 pub mod target_db;

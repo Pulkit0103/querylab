@@ -38,9 +38,29 @@ pub async fn prune_history(db: &PgPool) -> Result<u64, sqlx::Error> {
     }
 }
 
-/// Runs [`prune_history`] periodically.
+const FINGERPRINT_BATCH: i64 = 1000;
+
+/// Fingerprints history recorded before fingerprints existed. New rows are
+/// fingerprinted on insert, so this only has work after an upgrade.
+pub async fn backfill_fingerprints(db: &PgPool) -> Result<u64, sqlx::Error> {
+    let mut total = 0;
+    loop {
+        let done = repo::backfill_fingerprints(db, FINGERPRINT_BATCH).await?;
+        total += done;
+        if done == 0 {
+            return Ok(total);
+        }
+    }
+}
+
+/// Runs [`backfill_fingerprints`] once, then [`prune_history`] periodically.
 pub fn spawn_history_retention(db: PgPool) {
     tokio::spawn(async move {
+        match backfill_fingerprints(&db).await {
+            Ok(n) if n > 0 => tracing::info!(updated = n, "history fingerprints backfilled"),
+            Ok(_) => {}
+            Err(e) => tracing::warn!(error = %e, "fingerprint backfill failed"),
+        }
         let mut interval = tokio::time::interval(RETENTION_INTERVAL);
         loop {
             interval.tick().await;

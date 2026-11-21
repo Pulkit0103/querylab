@@ -27,7 +27,10 @@ use crate::{
 const MAX_BODY_BYTES: usize = 2 * 1024 * 1024;
 
 pub fn build_router(state: AppState) -> Router {
-    use handlers::{auth, connections, data, diagrams, library, query, schema, workspace};
+    use handlers::{
+        auth, connections, data, diagrams, library, monitoring, performance, query, schema,
+        workspace,
+    };
 
     let api = Router::new()
         .route("/health", get(handlers::health::health))
@@ -93,6 +96,25 @@ pub fn build_router(state: AppState) -> Router {
                 .put(diagrams::put_layout)
                 .delete(diagrams::delete_layout),
         )
+        // Monitoring
+        .route(
+            "/connections/{id}/monitor/activity",
+            get(monitoring::activity),
+        )
+        .route("/connections/{id}/monitor/locks", get(monitoring::locks))
+        .route("/connections/{id}/monitor/sizes", get(monitoring::sizes))
+        .route(
+            "/connections/{id}/monitor/top-queries",
+            get(monitoring::top_queries),
+        )
+        .route(
+            "/connections/{id}/monitor/backends/{pid}/cancel",
+            post(monitoring::cancel),
+        )
+        .route(
+            "/connections/{id}/monitor/backends/{pid}/terminate",
+            post(monitoring::terminate),
+        )
         // Data Studio
         .route("/connections/{id}/data/browse", post(data::browse))
         .route("/connections/{id}/data/preview", post(data::preview))
@@ -137,6 +159,20 @@ pub fn build_router(state: AppState) -> Router {
             axum::routing::put(library::update_collection).delete(library::delete_collection),
         )
         .route("/stats", get(library::stats))
+        // Performance
+        .route("/performance/fingerprints", get(performance::fingerprints))
+        .route(
+            "/performance/fingerprints/{fingerprint}",
+            get(performance::timeline),
+        )
+        .route(
+            "/plans",
+            get(performance::list_plans).post(performance::create_plan),
+        )
+        .route(
+            "/plans/{id}",
+            get(performance::get_plan).delete(performance::delete_plan),
+        )
         // Workspace
         .route(
             "/workspace/tabs",

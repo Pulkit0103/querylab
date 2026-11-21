@@ -310,6 +310,17 @@ async fn other_users_cannot_touch_any_connection_endpoint(pool: PgPool) {
         ("GET", format!("/api/connections/{id}/catalog"), None),
         ("GET", format!("/api/connections/{id}/schema-graph"), None),
         (
+            "GET",
+            format!("/api/connections/{id}/monitor/activity"),
+            None,
+        ),
+        ("GET", format!("/api/connections/{id}/monitor/sizes"), None),
+        (
+            "POST",
+            format!("/api/connections/{id}/monitor/backends/1/terminate"),
+            Some(json!({})),
+        ),
+        (
             "PUT",
             format!("/api/connections/{id}/diagram-layouts/public"),
             Some(json!({ "positions": {} })),

@@ -59,7 +59,7 @@ const analyzed: ExplainResult = {
 };
 
 function runtime(overrides: Partial<TabRuntime> = {}): TabRuntime {
-  return { exec: { status: "idle" }, plan: null, planError: null, messages: [], view: "plan", ...overrides };
+  return { exec: { status: "idle" }, plan: null, planSource: null, planError: null, messages: [], view: "plan", ...overrides };
 }
 
 describe("PlanView", () => {

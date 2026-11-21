@@ -30,7 +30,7 @@ const INTROSPECTION_TIMEOUT: Duration = Duration::from_secs(15);
 const MAX_TABLES: i64 = 5000;
 
 /// Excludes system schemas. `$1`-free so it can be embedded.
-const USER_SCHEMAS: &str = "n.nspname NOT IN ('pg_catalog', 'information_schema') \
+pub(crate) const USER_SCHEMAS: &str = "n.nspname NOT IN ('pg_catalog', 'information_schema') \
      AND n.nspname NOT LIKE 'pg\\_toast%' AND n.nspname NOT LIKE 'pg\\_temp\\_%'";
 
 /// Excludes objects that belong to extensions (e.g. pgcrypto functions).

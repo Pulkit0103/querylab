@@ -124,7 +124,7 @@ export function useQueryRunner() {
           },
           { signal: entry.controller.signal },
         );
-        s.finishExplain(tabId, plan);
+        s.finishExplain(tabId, plan, { sql, connectionId });
         s.addMessage(tabId, {
           level: "info",
           text: analyze

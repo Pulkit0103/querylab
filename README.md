@@ -274,6 +274,44 @@ of SQL text. Use a role with only `SELECT` grants for defence in depth.
 - Each node expands to show its conditions, sort and group keys, buffers,
   output columns and memory. The raw JSON plan is one click away and can be
   copied.
+- **Save plan** keeps a plan for comparison in the Analyzer.
+
+## Performance and monitoring
+
+- **Analyzer** (`/analyzer`):
+  - **Query performance:** editor queries grouped by *fingerprint*: the
+    statement with literals and parameters replaced by `?`, keywords
+    lower-cased, comments and extra whitespace removed and value lists
+    collapsed (`utils/fingerprint.rs`, a small tokenizer). Each group shows
+    runs, failures, median, p95 and total time, with per-day timelines and
+    the latest runs. History recorded before fingerprints existed is
+    fingerprinted at startup.
+  - **Plan comparison:** pick two saved plans to see time, cost and node
+    count side by side, how each table is read (for example *Seq Scan →
+    Bitmap Heap Scan*) and which operations appeared or disappeared, above
+    both plan trees.
+- **Monitoring** (`/monitoring`), for the active connection:
+  - **Activity:** sessions of the database (`pg_stat_activity`) with state,
+    running and transaction time, wait events, who they wait for and the
+    statement.
+  - **Locks:** a blocking tree from `pg_blocking_pids()` (who blocks whom,
+    deadlocks included) and the locks those sessions hold or wait for.
+  - **Sizes:** database, schema, table (table and index split, which add up
+    to `pg_total_relation_size`) and index sizes, dead-tuple share, last
+    vacuum and unused indexes.
+  - **Top queries:** `pg_stat_statements` by total time, mean time or calls.
+    When the extension is missing or unreadable the page says why.
+  - Views refresh every 5, 10 or 30 seconds only while open; the server
+    allows 30 refreshes a minute per user, connection and view. Each refresh
+    uses a read-only connection with a 5 s statement timeout.
+  - **Privileges:** without `pg_monitor` / `pg_read_all_stats`, other roles'
+    statements are hidden by PostgreSQL; the page explains this instead of
+    failing.
+  - **Cancel and terminate** (`pg_cancel_backend`, `pg_terminate_backend`)
+    need a read-write connection and the same typed confirmation as data
+    changes on staging and production. PostgreSQL decides whether the role
+    may signal the session. Every attempt that reaches the server is
+    recorded in history as an *Admin action*.
 
 ## Library and workspace
 
@@ -519,6 +557,16 @@ explorer) browses and edits table rows without writing SQL.
 | GET/POST | `/api/collections`      | List/create folders (`parent_id` nests them) |
 | PUT/DELETE | `/api/collections/{id}` | Rename and/or move (`parent_id`); delete removes subfolders, queries are kept |
 | GET    | `/api/stats?days=`        | Dashboard statistics                     |
+| GET    | `/api/performance/fingerprints?connection_id=&days=` | Editor queries grouped by fingerprint (fingerprints are strings) |
+| GET    | `/api/performance/fingerprints/{fingerprint}?connection_id=&days=` | Daily p50/p95 and recent runs of one fingerprint |
+| GET/POST | `/api/plans`            | List/save plans (`{name, connection_id, sql, plan}`, at most 500) |
+| GET/DELETE | `/api/plans/{id}`     | One saved plan with its EXPLAIN result   |
+| GET    | `/api/connections/{id}/monitor/activity` | Sessions and the role's monitoring privileges |
+| GET    | `/api/connections/{id}/monitor/locks` | Blocking tree and related locks |
+| GET    | `/api/connections/{id}/monitor/sizes?schema=` | Database, schema, table and index sizes |
+| GET    | `/api/connections/{id}/monitor/top-queries?sort=total\|mean\|calls` | `pg_stat_statements` (`available: false` with a reason when not readable) |
+| POST   | `/api/connections/{id}/monitor/backends/{pid}/cancel` | Cancel a session's statement (`{confirm}`) |
+| POST   | `/api/connections/{id}/monitor/backends/{pid}/terminate` | Terminate a session (`{confirm}`) |
 | GET/PUT | `/api/workspace/tabs`    | Load/save the synced editor session (≤ 50 tabs, ≤ 2 MiB) |
 | GET/PUT | `/api/workspace/settings` | History retention in days (1–3650, default 90) |
 
