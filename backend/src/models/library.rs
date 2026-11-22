@@ -44,6 +44,8 @@ pub enum HistoryKind {
     DataApply,
     Migration,
     Import,
+    /// Generated test rows.
+    MockData,
     /// A privileged action on the target server (cancel or terminate a backend).
     Admin,
 }
@@ -55,6 +57,7 @@ impl HistoryKind {
             HistoryKind::DataApply => "data_apply",
             HistoryKind::Migration => "migration",
             HistoryKind::Import => "import",
+            HistoryKind::MockData => "mock_data",
             HistoryKind::Admin => "admin",
         }
     }

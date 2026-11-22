@@ -499,6 +499,7 @@ pub enum ExportFormat {
     Csv,
     Json,
     Sql,
+    Xlsx,
 }
 
 impl ExportFormat {
@@ -507,6 +508,7 @@ impl ExportFormat {
             ExportFormat::Csv => "csv",
             ExportFormat::Json => "json",
             ExportFormat::Sql => "sql",
+            ExportFormat::Xlsx => "xlsx",
         }
     }
 
@@ -515,12 +517,30 @@ impl ExportFormat {
             ExportFormat::Csv => "text/csv; charset=utf-8",
             ExportFormat::Json => "application/json",
             ExportFormat::Sql => "application/sql; charset=utf-8",
+            ExportFormat::Xlsx => {
+                "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+            }
         }
     }
 }
 
+/// Data Studio export: a table source plus a format.
 #[derive(Debug, Deserialize)]
 pub struct ExportRequest {
+    #[serde(flatten)]
+    pub source: TableSource,
+    pub format: ExportFormat,
+}
+
+impl Validate for ExportRequest {
+    fn validate(&self) -> Result<(), AppError> {
+        self.source.validate()
+    }
+}
+
+/// Rows of one table: all, filtered (Phase 4 filter model) or selected by key.
+#[derive(Debug, Deserialize)]
+pub struct TableSource {
     pub schema: String,
     pub table: String,
     #[serde(default)]
@@ -535,10 +555,9 @@ pub struct ExportRequest {
     /// Export only these columns, in this order. Defaults to all columns.
     #[serde(default)]
     pub columns: Option<Vec<String>>,
-    pub format: ExportFormat,
 }
 
-impl Validate for ExportRequest {
+impl Validate for TableSource {
     fn validate(&self) -> Result<(), AppError> {
         let mut v = Validator::new();
         validate_target(&mut v, &self.schema, &self.table);

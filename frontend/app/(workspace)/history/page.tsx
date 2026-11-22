@@ -54,6 +54,8 @@ const KINDS = [
   { value: "query", label: "Editor queries" },
   { value: "data_apply", label: "Data Studio changes" },
   { value: "migration", label: "Migrations" },
+  { value: "import", label: "Imports" },
+  { value: "mock_data", label: "Mock data" },
   { value: "admin", label: "Admin actions" },
 ];
 
@@ -105,6 +107,11 @@ function HistoryRow({ entry }: { entry: HistoryEntry }) {
         )}
         {entry.kind === "migration" && (
           <span className="mb-1 inline-block rounded bg-brand/15 px-1.5 py-0.5 text-[10px] font-medium text-brand">Migration</span>
+        )}
+        {(entry.kind === "import" || entry.kind === "mock_data") && (
+          <span className="mb-1 inline-block rounded bg-chart-3/15 px-1.5 py-0.5 text-[10px] font-medium text-chart-3">
+            {entry.kind === "import" ? "Import" : "Mock data"}
+          </span>
         )}
         {entry.kind === "admin" && (
           <span className="mb-1 inline-block rounded bg-warning/15 px-1.5 py-0.5 text-[10px] font-medium text-warning">Admin action</span>

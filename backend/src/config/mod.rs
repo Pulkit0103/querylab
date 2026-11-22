@@ -89,6 +89,12 @@ pub struct Config {
     pub query_rate_limit_per_minute: u32,
     /// Simultaneous executions allowed per user.
     pub max_concurrent_queries_per_user: usize,
+    /// Largest file accepted by an import.
+    pub import_max_bytes: usize,
+    /// Upload bytes held in memory across all imports at once.
+    pub import_memory_budget: usize,
+    /// Allow mock data on connections marked as production (never by default).
+    pub mock_data_allow_production: bool,
 }
 
 impl Config {
@@ -136,6 +142,13 @@ impl Config {
             Duration::from_secs(parse_or("QUERY_TIMEOUT_SECS", 30)?).min(query_max_timeout);
         let query_max_rows: usize = parse_or("QUERY_MAX_ROWS", 10_000)?;
         let allow_private_networks: bool = parse_or("ALLOW_PRIVATE_NETWORKS", false)?;
+        let import_max_bytes: usize = parse_or("IMPORT_MAX_BYTES", 50 * 1024 * 1024)?;
+        if import_max_bytes == 0 {
+            return Err(ConfigError::Invalid {
+                name: "IMPORT_MAX_BYTES",
+                reason: "must be greater than zero".into(),
+            });
+        }
         if allow_private_networks && environment.is_production() {
             eprintln!(
                 "warning: ALLOW_PRIVATE_NETWORKS=true in production lets users reach internal network addresses"
@@ -189,6 +202,10 @@ impl Config {
             query_max_rows,
             query_rate_limit_per_minute: parse_or("QUERY_RATE_LIMIT_PER_MINUTE", 120)?,
             max_concurrent_queries_per_user: parse_or("MAX_CONCURRENT_QUERIES_PER_USER", 3)?,
+            import_max_bytes,
+            import_memory_budget: parse_or("IMPORT_MEMORY_BUDGET_BYTES", 3 * import_max_bytes)?
+                .max(import_max_bytes),
+            mock_data_allow_production: parse_or("MOCK_DATA_ALLOW_PRODUCTION", false)?,
         })
     }
 
@@ -227,6 +244,9 @@ impl Config {
             query_max_rows: 10_000,
             query_rate_limit_per_minute: 1000,
             max_concurrent_queries_per_user: 5,
+            import_max_bytes: 50 * 1024 * 1024,
+            import_memory_budget: 150 * 1024 * 1024,
+            mock_data_allow_production: false,
         }
     }
 }

@@ -8,6 +8,7 @@ import {
   Columns3,
   Copy,
   Database,
+  Download,
   Eye,
   FileCode2,
   FolderTree,
@@ -36,6 +37,9 @@ import {
   DropdownMenuContent,
   DropdownMenuItem,
   DropdownMenuSeparator,
+  DropdownMenuSub,
+  DropdownMenuSubContent,
+  DropdownMenuSubTrigger,
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
 import { Skeleton } from "@/components/ui/skeleton";
@@ -53,6 +57,7 @@ import {
   useTables,
 } from "@/hooks/use-schema";
 import { ApiError } from "@/lib/api-client";
+import { EXPORT_FORMATS, postDownload } from "@/lib/download";
 import { extrasBySchema, functionSignature, sameObject, type ExplorerObject } from "@/lib/explorer";
 import { formatNumber } from "@/lib/format";
 import { insertTemplate, qualifiedName, selectSql } from "@/lib/sql-ident";
@@ -262,6 +267,34 @@ function TableMenuItems({
           </DropdownMenuItem>
         </>
       )}
+      <DropdownMenuSub>
+        <DropdownMenuSubTrigger>
+          <Download /> Export data
+        </DropdownMenuSubTrigger>
+        <DropdownMenuSubContent className="w-48">
+          {EXPORT_FORMATS.map(({ format, label }) => (
+            <DropdownMenuItem
+              key={format}
+              onClick={() =>
+                void toast.promise(
+                  postDownload(
+                    `/api/connections/${connectionId}/exports`,
+                    { format, source: { type: "table", schema: table.schema, table: table.name } },
+                    `${table.name}.${format}`,
+                  ),
+                  {
+                    loading: `Exporting ${table.name}…`,
+                    success: "Export downloaded",
+                    error: (e) => (e instanceof ApiError ? e.message : "Export failed"),
+                  },
+                )
+              }
+            >
+              {label}
+            </DropdownMenuItem>
+          ))}
+        </DropdownMenuSubContent>
+      </DropdownMenuSub>
       <DropdownMenuSeparator />
       <DropdownMenuItem onClick={() => copy(table.name, "table name")}>
         <Copy /> Copy name

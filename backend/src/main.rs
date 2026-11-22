@@ -28,6 +28,13 @@ async fn run() -> Result<(), Box<dyn std::error::Error>> {
 
     querylab_api::services::auth::spawn_session_cleanup(pool.clone());
     querylab_api::services::library::spawn_history_retention(pool.clone());
+    if config.run_migrations {
+        match database::data_jobs::fail_interrupted(&pool).await {
+            Ok(0) => {}
+            Ok(n) => tracing::warn!(jobs = n, "marked interrupted data jobs as failed"),
+            Err(err) => tracing::warn!(error = %err, "could not update interrupted data jobs"),
+        }
+    }
 
     let addr = config.bind_addr;
     let app = build_router(AppState::new(config, pool));

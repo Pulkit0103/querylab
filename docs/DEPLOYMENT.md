@@ -127,6 +127,8 @@ The repository includes a Blueprint (`render.yaml`).
 | `RUST_LOG` | `querylab_api=info,tower_http=info,sqlx=warn` | |
 | `DATABASE_MAX_CONNECTIONS` / `DATABASE_MIN_CONNECTIONS` | `10` / `2` | stay within the Neon plan's connection limit |
 | `REQUEST_TIMEOUT_SECS`, `QUERY_*`, `*_RATE_LIMIT_*` | defaults | see the README configuration table |
+| `IMPORT_MAX_BYTES` / `IMPORT_MEMORY_BUDGET_BYTES` | `52428800` / `157286400` | uploads are held in memory; keep the budget well below the instance's RAM |
+| `MOCK_DATA_ALLOW_PRODUCTION` | `false` | leave unset: mock data is refused on production connections |
 
 **`TRUSTED_PROXY_HOPS`** decides which `X-Forwarded-For` entry counts as
 the client address for rate limiting.
@@ -181,7 +183,9 @@ After every production deploy, check all of the following:
 ## Scaling notes
 
 - Rate limits and the per-user concurrency limit are held **in memory**.
-  So is the registry used to cancel running queries.
+  So are the registry used to cancel running queries and the files and
+  progress of running imports and mock data runs (finished jobs are stored
+  in `data_jobs`; jobs interrupted by a restart are marked failed).
 - Run **one API instance**. Both blueprints pin replicas to 1.
 - To scale out, move the limiter and registry to Redis (e.g. Upstash) and
   route cancellation to the instance running the query.

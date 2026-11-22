@@ -16,7 +16,7 @@ export interface ExecError {
 export type ExecState =
   | { status: "idle" }
   | { status: "running"; kind: "execute" | "explain"; executionId: string; startedAt: number }
-  | { status: "success"; result: QueryResult; finishedAt: number }
+  | { status: "success"; result: QueryResult; finishedAt: number; source?: PlanSource }
   | { status: "error"; error: ExecError; finishedAt: number };
 
 export interface Message {
@@ -93,7 +93,7 @@ interface EditorState {
 
   runtimeFor: (id: string) => TabRuntime;
   startExec: (id: string, kind: "execute" | "explain", executionId: string) => void;
-  finishExec: (id: string, result: QueryResult) => void;
+  finishExec: (id: string, result: QueryResult, source?: PlanSource) => void;
   failExec: (id: string, error: ExecError) => void;
   finishExplain: (id: string, plan: ExplainResult, source?: PlanSource) => void;
   failExplain: (id: string, error: ExecError) => void;
@@ -193,10 +193,10 @@ export const useEditorStore = create<EditorState>()(
             exec: { status: "running", kind, executionId, startedAt: Date.now() },
           })),
 
-        finishExec: (id, result) =>
+        finishExec: (id, result, source) =>
           updateRuntime(id, (rt) => ({
             ...rt,
-            exec: { status: "success", result, finishedAt: Date.now() },
+            exec: { status: "success", result, finishedAt: Date.now(), source },
             view: "results",
           })),
 

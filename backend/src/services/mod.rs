@@ -5,12 +5,18 @@
 
 pub mod auth;
 pub mod connections;
+pub mod data_jobs;
 pub mod data_studio;
 pub mod ddl;
 pub mod diagrams;
 pub mod execution;
+pub mod export;
+pub mod import;
+pub mod import_parse;
 pub mod library;
 pub mod migrations;
+pub mod mock_data;
+pub mod mock_gen;
 pub mod monitoring;
 pub mod performance;
 pub mod schema;

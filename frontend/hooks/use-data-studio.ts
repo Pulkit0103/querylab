@@ -2,7 +2,8 @@
 
 import { keepPreviousData, useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 
-import { api, ApiError, errorMessageFor } from "@/lib/api-client";
+import { api, ApiError } from "@/lib/api-client";
+import { postDownload } from "@/lib/download";
 import type {
   ApplyResponse,
   BrowseRequest,
@@ -88,47 +89,7 @@ export interface ExportBody {
   columns?: string[];
 }
 
-function filenameFrom(disposition: string | null, fallback: string): string {
-  const match = disposition?.match(/filename="([^"]+)"/);
-  return match?.[1] ?? fallback;
-}
-
 /** Streams an export from the server and saves it as a file. */
-export async function downloadExport(connectionId: string, body: ExportBody): Promise<void> {
-  let res: Response;
-  try {
-    res = await fetch(`${base(connectionId)}/export`, {
-      method: "POST",
-      headers: { "Content-Type": "application/json", "X-QueryLab-CSRF": "1" },
-      body: JSON.stringify(body),
-      credentials: "same-origin",
-      cache: "no-store",
-    });
-  } catch {
-    throw new ApiError(0, "network_error", "Unable to reach the QueryLab API.");
-  }
-  if (!res.ok) {
-    const data = (await res.json().catch(() => undefined)) as
-      | { error?: { code?: string; message?: string; details?: unknown } }
-      | undefined;
-    const requestId = res.headers.get("x-request-id");
-    throw new ApiError(
-      res.status,
-      data?.error?.code ?? "http_error",
-      errorMessageFor(res.status, data?.error?.message ?? `Export failed with status ${res.status}`, requestId, data?.error?.code),
-      data?.error?.details,
-      requestId ?? undefined,
-    );
-  }
-  // A failure after streaming started aborts the body, so this rejects
-  // instead of saving a partial file.
-  const blob = await res.blob();
-  const url = URL.createObjectURL(blob);
-  const a = document.createElement("a");
-  a.href = url;
-  a.download = filenameFrom(res.headers.get("content-disposition"), `${body.table}.${body.format}`);
-  document.body.appendChild(a);
-  a.click();
-  a.remove();
-  setTimeout(() => URL.revokeObjectURL(url), 1000);
+export function downloadExport(connectionId: string, body: ExportBody): Promise<void> {
+  return postDownload(`${base(connectionId)}/export`, body, `${body.table}.${body.format}`);
 }

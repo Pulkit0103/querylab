@@ -3,6 +3,7 @@
 pub mod auth;
 pub mod connection;
 pub mod data;
+pub mod data_jobs;
 pub mod diagram;
 pub mod library;
 pub mod migrations;

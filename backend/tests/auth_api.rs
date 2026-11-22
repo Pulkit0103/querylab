@@ -24,6 +24,12 @@ async fn protected_routes_require_authentication() {
             "DELETE",
             "/api/connections/00000000-0000-0000-0000-000000000000",
         ),
+        ("GET", "/api/data-jobs"),
+        ("GET", "/api/imports/00000000-0000-0000-0000-000000000000"),
+        (
+            "PUT",
+            "/api/imports/00000000-0000-0000-0000-000000000000/data?offset=0",
+        ),
     ] {
         let (status, body) = send(&app, api(method, uri, None, None)).await;
         assert_eq!(status, 401, "{method} {uri}");

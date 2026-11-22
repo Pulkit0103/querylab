@@ -28,8 +28,8 @@ const MAX_BODY_BYTES: usize = 2 * 1024 * 1024;
 
 pub fn build_router(state: AppState) -> Router {
     use handlers::{
-        auth, connections, data, diagrams, library, migrations, monitoring, performance, query,
-        schema, workspace,
+        auth, connections, data, data_jobs, diagrams, library, migrations, monitoring, performance,
+        query, schema, workspace,
     };
 
     let api = Router::new()
@@ -120,6 +120,30 @@ pub fn build_router(state: AppState) -> Router {
         .route("/connections/{id}/data/preview", post(data::preview))
         .route("/connections/{id}/data/apply", post(data::apply))
         .route("/connections/{id}/data/export", post(data::export))
+        // Import, export and mock data
+        .route("/connections/{id}/exports", post(data_jobs::export))
+        .route("/connections/{id}/imports", post(data_jobs::create_import))
+        .route(
+            "/imports/{id}/data",
+            axum::routing::put(data_jobs::upload).layer(DefaultBodyLimit::max(
+                crate::models::data_jobs::MAX_UPLOAD_CHUNK_BYTES + 1024,
+            )),
+        )
+        .route("/imports/{id}/analyze", post(data_jobs::analyze))
+        .route("/imports/{id}/check", post(data_jobs::check))
+        .route("/imports/{id}/run", post(data_jobs::run_import))
+        .route(
+            "/imports/{id}",
+            get(data_jobs::import_status).delete(data_jobs::delete_import),
+        )
+        .route(
+            "/connections/{id}/mock-data/preview",
+            post(data_jobs::mock_preview),
+        )
+        .route("/connections/{id}/mock-data/run", post(data_jobs::mock_run))
+        .route("/data-jobs", get(data_jobs::list_jobs))
+        .route("/data-jobs/{id}", get(data_jobs::get_job))
+        .route("/data-jobs/{id}/cancel", post(data_jobs::cancel_job))
         // SQL execution
         .route("/query/execute", post(query::execute))
         .route("/query/explain", post(query::explain))

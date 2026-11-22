@@ -4,6 +4,7 @@
 pub mod auth;
 pub mod connections;
 pub mod data;
+pub mod data_jobs;
 pub mod diagrams;
 pub mod health;
 pub mod library;

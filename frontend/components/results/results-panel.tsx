@@ -1,12 +1,23 @@
 "use client";
 
 import type { ReactNode } from "react";
-import { AlertTriangle, GitBranch, Loader2, Table2, XCircle } from "lucide-react";
+import { AlertTriangle, Download, GitBranch, Loader2, Table2, XCircle } from "lucide-react";
+import { toast } from "sonner";
 
 import { EmptyState } from "@/components/common/empty-state";
+import { Button } from "@/components/ui/button";
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuLabel,
+  DropdownMenuTrigger,
+} from "@/components/ui/dropdown-menu";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
+import { ApiError } from "@/lib/api-client";
+import { downloadQueryExport, EXPORT_FORMATS, EXPORT_ROW_LIMIT } from "@/lib/download";
 import { formatDuration, formatNumber } from "@/lib/format";
-import { useEditorStore, type ResultsView, type TabRuntime } from "@/stores/editor-store";
+import { useEditorStore, type PlanSource, type ResultsView, type TabRuntime } from "@/stores/editor-store";
 
 import { MessagesView } from "./messages-view";
 import { PlanView } from "./plan-view";
@@ -69,6 +80,36 @@ function ResultsBody({ runtime }: { runtime: TabRuntime }) {
   );
 }
 
+/** Re-runs the statement read-only on the server and downloads every row. */
+function ExportAll({ source }: { source: PlanSource }) {
+  const run = (format: (typeof EXPORT_FORMATS)[number]["format"]) =>
+    toast.promise(downloadQueryExport(source.connectionId, source.sql, format), {
+      loading: "Exporting all rows…",
+      success: "Export downloaded",
+      error: (e) => (e instanceof ApiError ? e.message : "Export failed"),
+    });
+  return (
+    <DropdownMenu>
+      <DropdownMenuTrigger render={<Button variant="ghost" size="xs" className="gap-1" />}>
+        <Download className="size-3" /> Export all
+      </DropdownMenuTrigger>
+      <DropdownMenuContent align="end" className="w-60">
+        <DropdownMenuLabel className="text-[11px] font-normal text-muted-foreground">
+          Runs the statement again (read-only) and streams every row
+        </DropdownMenuLabel>
+        {EXPORT_FORMATS.map(({ format, label }) => (
+          <DropdownMenuItem key={format} onClick={() => run(format)}>
+            {label}
+            <span className="ml-auto text-[10px] text-muted-foreground">
+              up to {formatNumber(EXPORT_ROW_LIMIT[format])}
+            </span>
+          </DropdownMenuItem>
+        ))}
+      </DropdownMenuContent>
+    </DropdownMenu>
+  );
+}
+
 function TabLabel({ children, badge }: { children: ReactNode; badge?: ReactNode }) {
   return (
     <span className="flex items-center gap-1.5">
@@ -90,6 +131,7 @@ export function ResultsPanel({ tabId }: { tabId: string }) {
   };
   const errorCount = rt.messages.filter((m) => m.level === "error").length;
   const success = rt.exec.status === "success" ? rt.exec.result : null;
+  const source = rt.exec.status === "success" ? rt.exec.source : undefined;
 
   return (
     <Tabs
@@ -131,6 +173,7 @@ export function ResultsPanel({ tabId }: { tabId: string }) {
             <span>
               <span className="text-foreground tabular-nums">{formatDuration(success.execution_time_ms)}</span>
             </span>
+            {source && success.columns.length > 0 && <ExportAll source={source} />}
           </div>
         )}
       </div>

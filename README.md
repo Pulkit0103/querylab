@@ -454,9 +454,9 @@ explorer) browses and edits table rows without writing SQL.
   - Hidden columns are remembered per table in the browser.
   - Ctrl+C copies the focused cell. Selected rows (or the page) copy as
     TSV or JSON.
-  - **Export** streams CSV, JSON or SQL `INSERT` statements for all
-    matching rows (up to 100,000) or for the selected rows, with the
-    visible columns.
+  - **Export** streams CSV, JSON, Excel or SQL `INSERT` statements for all
+    matching rows or for the selected rows, with the visible columns (see
+    [Import, export and mock data](#import-export-and-mock-data)).
   - CSV text that a spreadsheet would run as a formula is prefixed with
     `'`.
 
@@ -468,6 +468,75 @@ explorer) browses and edits table rows without writing SQL.
   functions parse it.
 - Rows are read as text, so keys, cursors and the stale-value check
   compare exactly what was loaded.
+
+## Import, export and mock data
+
+**Import / Export** (`/data`) loads files into tables, generates test data
+and lists past jobs.
+
+- **Imports** (CSV with any delimiter; JSON as an array of objects or one
+  object per line; up to 50 MiB):
+  - The browser uploads the file in 4 MiB chunks, so no proxy body limit
+    applies. A retried chunk is acknowledged and an out-of-order chunk is
+    answered with the offset to resume from. The file is held in memory only
+    while the import exists, against a server-wide memory budget, and is
+    never stored.
+  - **Analyze** detects the format, delimiter and header, counts the rows,
+    reports unreadable rows with their line numbers and infers a type for
+    each column from the first 1,000 rows.
+  - **Mapping** matches file columns to table columns by name (ignoring
+    case and punctuation). The check flags required columns that are not
+    mapped, generated columns, values that do not fit the column's type or
+    length, and identity or sequence columns that receive file values.
+  - **Duplicates:** report them as errors, skip them
+    (`ON CONFLICT DO NOTHING`) or update the existing rows
+    (`ON CONFLICT (key) DO UPDATE`) on a chosen primary key or unique index.
+  - **Invalid rows:** *all or nothing* rolls back on the first invalid row;
+    *skip invalid* writes the valid rows and reports the others.
+  - **How it runs:** in one transaction on the target, rows are streamed
+    with `COPY … FROM STDIN` into a temporary staging table. On PostgreSQL
+    16+ every value is checked with `pg_input_is_valid`, so type errors are
+    found in one pass. Rows are then merged in batches of 5,000, each under a
+    savepoint. A failing batch is split in halves until the failing rows are
+    isolated, so unique, foreign key and check violations are also reported
+    per row with their line number.
+  - Imports need a read-write connection and INSERT (and, for updates,
+    UPDATE) privilege; production connections require typing the
+    connection name. Progress is polled; a running import can be cancelled.
+- **Exports** stream with flat memory: rows are read from a cursor inside
+  `BEGIN READ ONLY` and encoded on the fly.
+  - Sources: a whole table, the rows matching a Table Editor filter, the
+    selected rows, or the full result of one read-only statement (**Export
+    all** in the results panel).
+  - Formats: CSV, JSON, SQL `INSERT` statements (up to 1,000,000 rows) and
+    Excel `.xlsx` (up to 200,000 rows, built in constant memory).
+  - Statement results are read as PostgreSQL text (the statement is wrapped
+    as a subquery), so arrays, ranges and other types match a table export.
+    Statements that cannot be wrapped, such as `SHOW`, fall back to decoded
+    values.
+- **Mock data:**
+  - Choose tables and row counts (up to 100,000 per table, 1,000,000 per
+    run). Tables are filled in foreign key order. **Add to the run** adds
+    parents that have no rows.
+  - Each column gets a generator from its name and type: names, emails,
+    companies, products, addresses, countries, phone numbers, URLs, text,
+    numbers, dates, timestamps, UUIDs, JSON, enum labels and more. Any
+    generator can be changed per column.
+  - Foreign keys draw from rows generated for another table of the run, or
+    from existing rows. Self-references point at rows written earlier in the
+    run. Cycles between tables are refused with an explanation.
+  - CHECK constraints such as `x > 0`, `x BETWEEN 1 AND 5` and
+    `status IN (…)` narrow the generators; other checks are listed as
+    warnings. Unique text values get a per-run suffix and unique integers
+    become sequences after the current maximum. Rows that still collide
+    are skipped and counted.
+  - The same seed produces the same values; the preview shows sample rows.
+  - Runs are refused on production connections unless
+    `MOCK_DATA_ALLOW_PRODUCTION=true`, and write everything in one
+    transaction.
+- **Jobs:** every import, export and mock data run is recorded in
+  `data_jobs` with its counts and report; imports and mock data runs also
+  appear in query history.
 
 ## Security and operations
 
@@ -544,6 +613,9 @@ explorer) browses and edits table rows without writing SQL.
 | `QUERY_MAX_ROWS`           | `10000`                  | Hard row limit |
 | `QUERY_RATE_LIMIT_PER_MINUTE` | `120`                 | Executions per user per minute |
 | `MAX_CONCURRENT_QUERIES_PER_USER` | `3`               | Simultaneous executions per user |
+| `IMPORT_MAX_BYTES`         | `52428800` (50 MiB)      | Largest file an import accepts |
+| `IMPORT_MEMORY_BUDGET_BYTES` | 3 × `IMPORT_MAX_BYTES` | Upload bytes held in memory across all imports |
+| `MOCK_DATA_ALLOW_PRODUCTION` | `false`                | Allow mock data on production connections |
 
 ## API
 
@@ -584,7 +656,19 @@ explorer) browses and edits table rows without writing SQL.
 | POST   | `/api/connections/{id}/data/browse` | One page of rows: `{schema, table, filter, sort, search, page_size, cursor}` |
 | POST   | `/api/connections/{id}/data/preview` | SQL for a filter and/or change set, without running it |
 | POST   | `/api/connections/{id}/data/apply` | Apply a change set in one transaction: `{schema, table, changes, confirm}` |
-| POST   | `/api/connections/{id}/data/export` | Stream rows as CSV, JSON or SQL `INSERT` statements |
+| POST   | `/api/connections/{id}/data/export` | Stream rows as CSV, JSON, Excel or SQL `INSERT` statements |
+| POST   | `/api/connections/{id}/exports` | `{format, source: {type: "table", schema, table, filter?, sort?, search?, keys?, columns?} \| {type: "query", sql, name?}}` → streamed file |
+| POST   | `/api/connections/{id}/imports` | `{file_name, size}` → `{import_id, max_chunk_bytes}` |
+| PUT    | `/api/imports/{id}/data?offset=` | Upload one chunk (raw bytes) |
+| POST   | `/api/imports/{id}/analyze` | `{format?, delimiter?, has_header?}` → columns, inferred types, preview rows, unreadable rows |
+| POST   | `/api/imports/{id}/check` | `{schema, table, mapping?}` → target columns, suggested or checked mapping, issues, unique keys |
+| POST   | `/api/imports/{id}/run` | `{schema, table, mapping, duplicate_mode, conflict_columns?, error_mode, empty_as_null, confirm?}` → job |
+| GET/DELETE | `/api/imports/{id}` | Progress and report / cancel or discard |
+| POST   | `/api/connections/{id}/mock-data/preview` | `{tables: [{schema, table, rows, columns?}], seed?}` → fill order, generators, sample rows |
+| POST   | `/api/connections/{id}/mock-data/run` | Same body plus `confirm`; refused on production → job |
+| GET    | `/api/data-jobs?kind=&limit=` | Recent imports, exports and mock data runs |
+| GET    | `/api/data-jobs/{id}` | Live progress or stored report |
+| POST   | `/api/data-jobs/{id}/cancel` | Cancel a running job |
 | POST   | `/api/query/execute`      | Execute one SQL statement                |
 | POST   | `/api/query/explain`      | EXPLAIN / EXPLAIN ANALYZE (JSON plan)    |
 | POST   | `/api/query/{execution_id}/cancel` | Cancel a running execution      |

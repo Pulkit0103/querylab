@@ -1,6 +1,7 @@
-//! Data Studio: browse, preview, apply and export the rows of a table.
+//! Data Studio: browse, preview and apply changes to the rows of a table.
+//! (Exports live in [`export`](crate::services::export).)
 //!
-//! * Browsing, previews and exports run on a read-only connection inside
+//! * Browsing and previews run on a read-only connection inside
 //!   `BEGIN READ ONLY`.
 //! * Applying a change set is a privileged workflow: it requires a
 //!   read-write connection, typed confirmation on production connections and
@@ -11,10 +12,8 @@
 
 use std::time::{Duration, Instant};
 
-use axum::body::Bytes;
 use futures_util::TryStreamExt;
-use sqlx::{postgres::PgRow, Connection, Executor, PgConnection, Row};
-use tokio::sync::mpsc;
+use sqlx::{Connection, Executor, PgConnection, Row};
 use uuid::Uuid;
 
 use crate::{
@@ -23,14 +22,15 @@ use crate::{
         connection::{ConnectionRecord, Environment},
         data::{
             AppliedChange, ApplyFailure, ApplyRequest, ApplyResponse, BrowseRequest,
-            BrowseResponse, ChangeKind, DataColumn, ExportFormat, ExportRequest, Pagination,
-            PreviewRequest, PreviewResponse, PreviewStatement, DEFAULT_PAGE_SIZE,
+            BrowseResponse, ChangeKind, DataColumn, Pagination, PreviewRequest, PreviewResponse,
+            PreviewStatement, DEFAULT_PAGE_SIZE,
         },
         library::HistoryKind,
     },
     services::{
         auth::AuthUser,
         connections::ConnectionService,
+        export::text_row,
         library::LibraryService,
         schema::RELKIND_LABEL,
         sql_builder::{
@@ -41,20 +41,10 @@ use crate::{
     state::AppState,
 };
 
-/// Exports stop after this many rows.
-pub const MAX_EXPORT_ROWS: u64 = 100_000;
 /// A browse page stops early once its values exceed this many bytes.
 const MAX_PAGE_BYTES: usize = 16 * 1024 * 1024;
 const CATALOG_TIMEOUT: Duration = Duration::from_secs(15);
-const EXPORT_CHUNK_BYTES: usize = 64 * 1024;
 const SQLSTATE_QUERY_CANCELED: &str = "57014";
-
-/// A streamed export: the handler turns `body` into the response body.
-pub struct ExportStream {
-    pub filename: String,
-    pub content_type: &'static str,
-    pub body: mpsc::Receiver<Result<Bytes, std::io::Error>>,
-}
 
 #[derive(sqlx::FromRow)]
 struct ColumnRow {
@@ -71,7 +61,11 @@ struct ColumnRow {
 }
 
 /// Loads the catalog model of a table, view or foreign table.
-async fn load_table(conn: &mut PgConnection, schema: &str, name: &str) -> AppResult<(Table, i64)> {
+pub(crate) async fn load_table(
+    conn: &mut PgConnection,
+    schema: &str,
+    name: &str,
+) -> AppResult<(Table, i64)> {
     let relation = sqlx::query_as::<_, (i64, String, bool, bool, bool)>(&format!(
         "SELECT c.oid::bigint, {RELKIND_LABEL}, \
                 has_table_privilege(c.oid, 'INSERT'), has_table_privilege(c.oid, 'UPDATE'), \
@@ -212,13 +206,7 @@ fn query(sql: &Sql) -> sqlx::query::Query<'_, sqlx::Postgres, sqlx::postgres::Pg
     q
 }
 
-fn text_row(row: &PgRow) -> Result<Vec<Option<String>>, sqlx::Error> {
-    (0..row.len())
-        .map(|i| row.try_get::<Option<String>, _>(i))
-        .collect()
-}
-
-async fn close(conn: PgConnection) {
+pub(crate) async fn close(conn: PgConnection) {
     let _ = tokio::time::timeout(Duration::from_secs(2), conn.close()).await;
 }
 
@@ -267,7 +255,11 @@ impl<'a> DataStudioService<'a> {
         Self { state }
     }
 
-    async fn connect(&self, record: &ConnectionRecord, read_only: bool) -> AppResult<PgConnection> {
+    pub(crate) async fn connect(
+        &self,
+        record: &ConnectionRecord,
+        read_only: bool,
+    ) -> AppResult<PgConnection> {
         let service = ConnectionService::new(self.state);
         let secret = service.decrypt_secret(record)?;
         let mut spec = TargetSpec::from_record(record, &secret);
@@ -626,166 +618,6 @@ impl<'a> DataStudioService<'a> {
             history_id,
         })
     }
-
-    /// Starts a streamed export. Validation and connection errors are
-    /// returned before any bytes are sent; a failure mid-stream aborts the
-    /// response so a partial file is never mistaken for a complete one.
-    pub async fn export(
-        &self,
-        user: &AuthUser,
-        connection_id: Uuid,
-        req: &ExportRequest,
-    ) -> AppResult<ExportStream> {
-        self.state.query_limiter.check(&user.user_id.to_string())?;
-        let (mut conn, _) = self.open_read_only(user.user_id, connection_id).await?;
-        let (table, _) = load_table(&mut conn, &req.schema, &req.table).await?;
-        let mut columns: Vec<usize> = match &req.columns {
-            Some(names) => names
-                .iter()
-                .map(|n| table.column(n).map(|(i, _)| i))
-                .collect::<AppResult<_>>()?,
-            None => (0..table.columns.len()).collect(),
-        };
-        if req.format == ExportFormat::Sql {
-            // Generated columns cannot be inserted.
-            columns.retain(|&i| !table.columns[i].generated);
-        }
-        if columns.is_empty() {
-            return Err(AppError::validation(
-                "columns",
-                "no exportable columns selected",
-            ));
-        }
-        let q = RowQuery {
-            filter: req.filter.as_ref(),
-            sort: &req.sort,
-            search: req.search.as_deref(),
-        };
-        let sql =
-            sql_builder::build_export(&table, &q, req.keys.as_deref(), &columns, MAX_EXPORT_ROWS)?;
-
-        let timeout = self.state.config.query_max_timeout;
-        conn.execute("BEGIN READ ONLY")
-            .await
-            .map_err(target_db::query_error)?;
-        target_db::set_local_timeouts(&mut conn, timeout).await?;
-
-        let (tx, rx) = mpsc::channel(8);
-        let format = req.format;
-        let user_id = user.user_id;
-        tokio::spawn(async move {
-            match write_export(&mut conn, &sql, &table, &columns, format, &tx).await {
-                Ok(rows) => {
-                    let _ = conn.execute("ROLLBACK").await;
-                    close(conn).await;
-                    tracing::info!(%user_id, %connection_id, rows, "data studio export finished");
-                }
-                Err(err) => {
-                    drop(conn);
-                    tracing::warn!(%user_id, %connection_id, error = %err, "data studio export failed");
-                    let _ = tx.send(Err(std::io::Error::other(err))).await;
-                }
-            }
-        });
-
-        let safe_name: String = req
-            .table
-            .chars()
-            .map(|c| {
-                if c.is_ascii_alphanumeric() || matches!(c, '_' | '-' | '.') {
-                    c
-                } else {
-                    '_'
-                }
-            })
-            .collect();
-        Ok(ExportStream {
-            filename: format!("{safe_name}.{}", req.format.extension()),
-            content_type: req.format.content_type(),
-            body: rx,
-        })
-    }
-}
-
-#[derive(Debug, thiserror::Error)]
-enum ExportError {
-    #[error("{0}")]
-    Query(#[from] sqlx::Error),
-    #[error("the client disconnected")]
-    Disconnected,
-}
-
-async fn send_chunk(
-    tx: &mpsc::Sender<Result<Bytes, std::io::Error>>,
-    buf: &mut String,
-) -> Result<(), ExportError> {
-    let chunk = Bytes::from(std::mem::take(buf));
-    tx.send(Ok(chunk))
-        .await
-        .map_err(|_| ExportError::Disconnected)
-}
-
-async fn write_export(
-    conn: &mut PgConnection,
-    sql: &Sql,
-    table: &Table,
-    columns: &[usize],
-    format: ExportFormat,
-    tx: &mpsc::Sender<Result<Bytes, std::io::Error>>,
-) -> Result<u64, ExportError> {
-    let cols: Vec<&Column> = columns.iter().map(|&i| &table.columns[i]).collect();
-    let mut buf = String::new();
-    match format {
-        ExportFormat::Csv => {
-            buf.push_str(&sql_builder::csv_line(
-                cols.iter().map(|c| Some(c.name.as_str())),
-            ));
-        }
-        ExportFormat::Json => buf.push('['),
-        ExportFormat::Sql => {
-            buf.push_str(&format!(
-                "-- Exported from {} by QueryLab\n",
-                table.qualified()
-            ));
-        }
-    }
-    let mut count = 0u64;
-    let mut stream = query(sql).fetch(conn);
-    while let Some(row) = stream.try_next().await? {
-        let values = text_row(&row)?;
-        match format {
-            ExportFormat::Csv => {
-                buf.push_str(&sql_builder::csv_line(values.iter().map(|v| v.as_deref())));
-            }
-            ExportFormat::Json => {
-                if count > 0 {
-                    buf.push(',');
-                }
-                buf.push_str("\n  {");
-                for (i, (col, value)) in cols.iter().zip(&values).enumerate() {
-                    if i > 0 {
-                        buf.push_str(", ");
-                    }
-                    buf.push_str(&serde_json::Value::String(col.name.clone()).to_string());
-                    buf.push_str(": ");
-                    buf.push_str(&sql_builder::json_cell(value.as_deref(), col).to_string());
-                }
-                buf.push('}');
-            }
-            ExportFormat::Sql => {
-                buf.push_str(&sql_builder::sql_insert_line(table, &cols, &values));
-            }
-        }
-        count += 1;
-        if buf.len() >= EXPORT_CHUNK_BYTES {
-            send_chunk(tx, &mut buf).await?;
-        }
-    }
-    if format == ExportFormat::Json {
-        buf.push_str(if count > 0 { "\n]\n" } else { "]\n" });
-    }
-    send_chunk(tx, &mut buf).await?;
-    Ok(count)
 }
 
 #[cfg(test)]
