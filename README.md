@@ -276,6 +276,52 @@ of SQL text. Use a role with only `SELECT` grants for defence in depth.
   copied.
 - **Save plan** keeps a plan for comparison in the Analyzer.
 
+## Schema diff and migrations
+
+- **Schema Diff** (`/schema-diff`) compares a source schema (the desired
+  state) with a target schema, on the same or different connections, and
+  lists every difference:
+  - Covered: tables, columns (type, default, NOT NULL, identity,
+    generated), constraints, indexes, views and materialized views,
+    functions and procedures, triggers, enums, domains, sequences, and a
+    missing target schema.
+  - Objects are matched by name. A dropped and an added table with the same
+    columns, or a dropped and an added column of the same type, are shown
+    as possible renames.
+  - Definitions come from PostgreSQL's own deparsers, with the schema's own
+    qualifier removed so two schemas compare by content.
+  - The script is ordered by dependency: drops first (triggers, views,
+    functions, foreign keys, constraints, indexes, columns, tables,
+    sequences, types), then creates and changes (schema, types, sequences,
+    tables, columns, constraints, foreign keys, indexes, functions, views,
+    triggers). It starts with `SET LOCAL search_path` and
+    `check_function_bodies = off`.
+  - Destructive changes (drops of tables, columns, types, sequences and
+    materialized views, and narrowing type changes) are flagged and not
+    selected by default. Each change shows the target and source
+    definitions side by side, its SQL and, where possible, its undo SQL.
+  - **Save as migration** stores the selected changes as a script, with the
+    generated down script when wanted.
+- **Migrations** (`/migrations`) are versioned scripts grouped in projects:
+  - Scripts can be written by hand or saved from a diff. They can be edited
+    until they have been applied somewhere, and may not contain
+    `BEGIN`/`COMMIT`.
+  - The status per connection comes from `querylab.schema_migrations` in
+    the target database (project, version, name, checksum, applied at and
+    by, duration). That table is created on the first apply.
+  - **Apply** first does a dry run (the script runs and is rolled back),
+    then asks for confirmation; production requires the connection name.
+  - Scripts run in version order, in one transaction with the statement
+    timeout, holding `pg_try_advisory_xact_lock`: a concurrent apply fails
+    immediately instead of waiting. A failed script changes nothing and is
+    reported with the PostgreSQL error.
+  - A checksum mismatch on an applied version (the script was changed after
+    it ran) blocks further applies.
+  - **Roll back** runs the down script of the latest applied version.
+  - Every run is recorded in the run history and in Query History as a
+    *Migration*.
+  - Read-only connections cannot apply.
+
 ## Performance and monitoring
 
 - **Analyzer** (`/analyzer`):
@@ -561,6 +607,15 @@ explorer) browses and edits table rows without writing SQL.
 | GET    | `/api/performance/fingerprints/{fingerprint}?connection_id=&days=` | Daily p50/p95 and recent runs of one fingerprint |
 | GET/POST | `/api/plans`            | List/save plans (`{name, connection_id, sql, plan}`, at most 500) |
 | GET/DELETE | `/api/plans/{id}`     | One saved plan with its EXPLAIN result   |
+| POST   | `/api/schema-diff`        | `{source:{connection_id,schema}, target:{…}}` → ordered changes with SQL, undo SQL and rename hints |
+| GET/POST | `/api/migration-projects` | List/create migration projects       |
+| DELETE | `/api/migration-projects/{id}` | Delete a project and its scripts (databases keep their applied state) |
+| GET/POST | `/api/migration-projects/{id}/migrations` | List/create scripts (`{version?, name, up_sql, down_sql?}`) |
+| GET    | `/api/migration-projects/{id}/status?connection_id=` | Applied, pending and drifted scripts on a database |
+| GET/PUT/DELETE | `/api/migrations/{id}` | One script; edit or delete only while not applied |
+| POST   | `/api/migrations/{id}/apply` | `{connection_id, confirm?, dry_run?}` |
+| POST   | `/api/migrations/{id}/rollback` | Runs the down script of the latest applied version |
+| GET    | `/api/migration-runs?project_id=&connection_id=` | Run history |
 | GET    | `/api/connections/{id}/monitor/activity` | Sessions and the role's monitoring privileges |
 | GET    | `/api/connections/{id}/monitor/locks` | Blocking tree and related locks |
 | GET    | `/api/connections/{id}/monitor/sizes?schema=` | Database, schema, table and index sizes |

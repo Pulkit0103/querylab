@@ -7,6 +7,7 @@ pub mod data;
 pub mod diagrams;
 pub mod health;
 pub mod library;
+pub mod migrations;
 pub mod monitoring;
 pub mod performance;
 pub mod query;

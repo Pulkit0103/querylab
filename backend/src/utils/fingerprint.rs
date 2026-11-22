@@ -325,6 +325,27 @@ pub fn normalize(sql: &str) -> String {
     out
 }
 
+/// The first word (lower case) of every statement in a script. String
+/// literals and dollar-quoted bodies are skipped, so `BEGIN` inside a
+/// function body is not reported.
+pub fn statement_heads(sql: &str) -> Vec<String> {
+    let mut heads = Vec::new();
+    let mut at_start = true;
+    for token in tokenize(sql) {
+        if token.is(";") {
+            at_start = true;
+            continue;
+        }
+        if at_start {
+            if let Token::Word(w) = &token {
+                heads.push(w.clone());
+            }
+            at_start = token.is("(");
+        }
+    }
+    heads
+}
+
 /// 64-bit FNV-1a hash of the normalised text (stable across releases, so
 /// stored fingerprints stay comparable).
 pub fn fingerprint(sql: &str) -> i64 {
@@ -395,6 +416,14 @@ mod tests {
         assert_eq!(normalize("select a - 1 from t"), "select a - ? from t");
         assert_eq!(normalize("select (a) - 1"), "select (a) - ?");
         assert_eq!(normalize("select -1"), "select ?");
+    }
+
+    #[test]
+    fn finds_statement_heads() {
+        assert_eq!(
+            statement_heads("BEGIN; create table t(); -- x\n(select 1); $$commit$$; Commit"),
+            ["begin", "create", "select", "commit"]
+        );
     }
 
     #[test]
