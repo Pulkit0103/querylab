@@ -48,6 +48,9 @@ export interface Collection {
 
 export interface SavedQuery {
   id: string;
+  workspace_id: string;
+  /** Creator; null once their account is deleted. */
+  created_by: string | null;
   name: string;
   description: string | null;
   sql_content: string;

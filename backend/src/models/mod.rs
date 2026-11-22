@@ -15,3 +15,4 @@ pub mod schema;
 pub mod schema_diff;
 pub mod user;
 pub mod workspace;
+pub mod workspaces;

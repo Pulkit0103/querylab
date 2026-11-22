@@ -26,8 +26,13 @@ export type Environment = "development" | "staging" | "production";
 /** Outcome of the latest connection test (`null` until tested). */
 export type ConnectionStatus = "online" | "unreachable" | "auth_failed" | "tls_error" | "error";
 
+/** The caller's access to a connection. */
+export type ConnectionAccess = "read" | "write" | "admin";
+
 export interface Connection {
   id: string;
+  workspace_id: string;
+  access: ConnectionAccess;
   name: string;
   database_type: "postgresql";
   host: string;
@@ -52,6 +57,7 @@ export interface Connection {
 }
 
 export interface ConnectionInput {
+  workspace_id?: string | null;
   name: string;
   host: string;
   port: number;

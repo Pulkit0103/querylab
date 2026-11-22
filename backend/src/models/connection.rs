@@ -5,6 +5,7 @@ use zeroize::Zeroizing;
 
 use crate::{
     errors::AppError,
+    models::workspaces::Access,
     utils::validation::{double_option, Validate, Validator},
 };
 
@@ -110,7 +111,9 @@ impl SslMode {
 #[derive(Debug, Clone, sqlx::FromRow)]
 pub struct ConnectionRecord {
     pub id: Uuid,
+    /// Creator; the encrypted credentials are bound to it.
     pub user_id: Uuid,
+    pub workspace_id: Uuid,
     pub name: String,
     pub database_type: String,
     pub host: String,
@@ -151,6 +154,9 @@ impl ConnectionRecord {
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub struct ConnectionResponse {
     pub id: Uuid,
+    pub workspace_id: Uuid,
+    /// The caller's effective access: read, write or admin.
+    pub access: Access,
     pub name: String,
     pub database_type: String,
     pub host: String,
@@ -174,10 +180,12 @@ pub struct ConnectionResponse {
     pub last_error: Option<String>,
 }
 
-impl From<&ConnectionRecord> for ConnectionResponse {
-    fn from(r: &ConnectionRecord) -> Self {
+impl ConnectionResponse {
+    pub fn with_access(r: &ConnectionRecord, access: Access) -> Self {
         Self {
             id: r.id,
+            workspace_id: r.workspace_id,
+            access,
             name: r.name.clone(),
             database_type: r.database_type.clone(),
             host: r.host.clone(),
@@ -247,6 +255,9 @@ pub struct CreateConnectionRequest {
     pub group_id: Option<Uuid>,
     pub color: Option<String>,
     pub ssl_root_cert: Option<String>,
+    /// Workspace to create the connection in; the personal one by default.
+    #[serde(default)]
+    pub workspace_id: Option<Uuid>,
 }
 
 /// Partial update. `password: None` keeps the stored password. For the
@@ -434,6 +445,9 @@ pub struct ConnectionGroup {
 pub struct ConnectionGroupRequest {
     pub name: String,
     pub position: Option<i32>,
+    /// Workspace of a new group; the personal one by default.
+    #[serde(default)]
+    pub workspace_id: Option<Uuid>,
 }
 
 impl Validate for ConnectionGroupRequest {

@@ -6,8 +6,11 @@ mod common;
 use querylab_api::{
     database::users,
     errors::AppError,
-    models::connection::{CreateConnectionRequest, SslMode, UpdateConnectionRequest},
-    services::connections::ConnectionService,
+    models::{
+        connection::{CreateConnectionRequest, SslMode, UpdateConnectionRequest},
+        library::CreateSavedQuery,
+    },
+    services::{connections::ConnectionService, library::LibraryService},
 };
 use sqlx::PgPool;
 use uuid::Uuid;
@@ -103,8 +106,8 @@ async fn connections_are_isolated_per_user(pool: PgPool) {
 
     let conn = svc.create(alice, &create_req("Prod", "pw")).await.unwrap();
 
-    assert_eq!(svc.list(alice).await.unwrap().len(), 1);
-    assert!(svc.list(bob).await.unwrap().is_empty());
+    assert_eq!(svc.list(alice, None).await.unwrap().len(), 1);
+    assert!(svc.list(bob, None).await.unwrap().is_empty());
     assert!(matches!(
         svc.get(bob, conn.id).await,
         Err(AppError::NotFound("connection"))
@@ -156,7 +159,7 @@ async fn update_keeps_password_unless_provided(pool: PgPool) {
     assert_eq!(svc.decrypt_secret(&record).unwrap().password, "second");
 
     svc.delete(user, conn.id).await.unwrap();
-    assert!(svc.list(user).await.unwrap().is_empty());
+    assert!(svc.list(user, None).await.unwrap().is_empty());
 }
 
 #[sqlx::test(migrator = "querylab_api::database::MIGRATOR")]
@@ -168,15 +171,20 @@ async fn saved_queries_cannot_reference_another_users_connection(pool: PgPool) {
     let bob = create_user(&pool, "bob@example.com").await;
     let conn = svc.create(alice, &create_req("Prod", "pw")).await.unwrap();
 
-    // The composite foreign key rejects cross-user references at the DB level.
-    let err = sqlx::query(
-        "INSERT INTO saved_queries (id, user_id, connection_id, name, sql_content) VALUES ($1, $2, $3, 'x', 'select 1')",
-    )
-    .bind(Uuid::new_v4())
-    .bind(bob)
-    .bind(conn.id)
-    .execute(&pool)
-    .await
-    .unwrap_err();
-    assert!(matches!(AppError::from(err), AppError::BadRequest(_)));
+    // Connections are shared through workspaces; a saved query can only link
+    // a connection its author can use.
+    let req: CreateSavedQuery = serde_json::from_value(serde_json::json!({
+        "name": "x", "sql_content": "select 1", "connection_id": conn.id,
+    }))
+    .unwrap();
+    let err = LibraryService::new(&state)
+        .create_saved(bob, &req)
+        .await
+        .unwrap_err();
+    assert!(matches!(err, AppError::BadRequest(_)), "{err:?}");
+    // Alice can.
+    LibraryService::new(&state)
+        .create_saved(alice, &req)
+        .await
+        .unwrap();
 }

@@ -180,6 +180,7 @@ impl<'a> AuthService<'a> {
             other => other,
         })?;
         tracing::info!(user_id = %user.id, "user registered");
+        crate::database::workspaces::ensure_personal(&self.state.db, user.id).await?;
         audit::record(
             &self.state.db,
             AuditEvent::new(Some(user.id), "auth.registered"),

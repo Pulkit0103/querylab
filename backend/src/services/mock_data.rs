@@ -30,6 +30,7 @@ use crate::{
             MockTablePlan, TableCount,
         },
         library::HistoryKind,
+        workspaces::Access,
     },
     services::{
         auth::AuthUser,
@@ -317,8 +318,9 @@ impl<'a> MockDataService<'a> {
     ) -> AppResult<JobView> {
         self.state.query_limiter.check(&user.user_id.to_string())?;
         let record = ConnectionService::new(self.state)
-            .get_record(user.user_id, connection_id)
-            .await?;
+            .require(user.user_id, connection_id, Access::Write)
+            .await?
+            .record;
         if self.production_blocked(&record) {
             return Err(AppError::Forbidden(PRODUCTION_REFUSED.into()));
         }

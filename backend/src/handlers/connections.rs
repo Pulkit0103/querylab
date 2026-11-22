@@ -3,9 +3,12 @@ use uuid::Uuid;
 
 use crate::{
     errors::AppResult,
-    models::connection::{
-        ConnectionGroup, ConnectionGroupRequest, ConnectionResponse, CreateConnectionRequest,
-        UpdateConnectionRequest,
+    models::{
+        connection::{
+            ConnectionGroup, ConnectionGroupRequest, ConnectionResponse, CreateConnectionRequest,
+            UpdateConnectionRequest,
+        },
+        workspaces::{GrantRequest, MemberAccess, WorkspaceScope},
     },
     services::{
         auth::AuthUser,
@@ -15,16 +18,21 @@ use crate::{
     state::AppState,
     utils::{
         network,
-        validation::{ApiPath, ValidatedJson},
+        validation::{ApiPath, ApiQuery, ValidatedJson},
     },
 };
 
+/// Connections the user can see; `?workspace_id=` limits them to one
+/// workspace.
 pub async fn list(
     State(state): State<AppState>,
     user: AuthUser,
+    ApiQuery(scope): ApiQuery<WorkspaceScope>,
 ) -> AppResult<Json<Vec<ConnectionResponse>>> {
     Ok(Json(
-        ConnectionService::new(&state).list(user.user_id).await?,
+        ConnectionService::new(&state)
+            .list(user.user_id, scope.workspace_id)
+            .await?,
     ))
 }
 
@@ -103,14 +111,55 @@ pub async fn duplicate(
     Ok((StatusCode::CREATED, Json(copy)))
 }
 
+pub async fn delete(
+    State(state): State<AppState>,
+    user: AuthUser,
+    ApiPath(id): ApiPath<Uuid>,
+) -> AppResult<StatusCode> {
+    ConnectionService::new(&state)
+        .delete(user.user_id, id)
+        .await?;
+    Ok(StatusCode::NO_CONTENT)
+}
+
+// -- access ---------------------------------------------------------------
+
+pub async fn grants(
+    State(state): State<AppState>,
+    user: AuthUser,
+    ApiPath(id): ApiPath<Uuid>,
+) -> AppResult<Json<Vec<MemberAccess>>> {
+    Ok(Json(
+        ConnectionService::new(&state)
+            .grants(user.user_id, id)
+            .await?,
+    ))
+}
+
+pub async fn set_grant(
+    State(state): State<AppState>,
+    user: AuthUser,
+    ApiPath((id, member)): ApiPath<(Uuid, Uuid)>,
+    ValidatedJson(req): ValidatedJson<GrantRequest>,
+) -> AppResult<Json<Vec<MemberAccess>>> {
+    Ok(Json(
+        ConnectionService::new(&state)
+            .set_grant(user.user_id, id, member, req.access)
+            .await?,
+    ))
+}
+
 // -- groups ---------------------------------------------------------------
 
 pub async fn list_groups(
     State(state): State<AppState>,
     user: AuthUser,
+    ApiQuery(scope): ApiQuery<WorkspaceScope>,
 ) -> AppResult<Json<Vec<ConnectionGroup>>> {
     Ok(Json(
-        ConnectionService::new(&state).groups(user.user_id).await?,
+        ConnectionService::new(&state)
+            .groups(user.user_id, scope.workspace_id)
+            .await?,
     ))
 }
 
@@ -145,17 +194,6 @@ pub async fn delete_group(
 ) -> AppResult<StatusCode> {
     ConnectionService::new(&state)
         .delete_group(user.user_id, id)
-        .await?;
-    Ok(StatusCode::NO_CONTENT)
-}
-
-pub async fn delete(
-    State(state): State<AppState>,
-    user: AuthUser,
-    ApiPath(id): ApiPath<Uuid>,
-) -> AppResult<StatusCode> {
-    ConnectionService::new(&state)
-        .delete(user.user_id, id)
         .await?;
     Ok(StatusCode::NO_CONTENT)
 }

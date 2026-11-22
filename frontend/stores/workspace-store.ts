@@ -11,6 +11,8 @@ interface WorkspaceState {
   openConnectionDialog: (editing?: Connection | null) => void;
   closeConnectionDialog: () => void;
 
+  /** Team or personal workspace whose connections and library are shown. */
+  activeWorkspaceId: string | null;
   /** Connection used by the editor and explorer. */
   activeConnectionId: string | null;
   sidebarCollapsed: boolean;
@@ -21,6 +23,7 @@ interface WorkspaceState {
   /** Explorer table currently shown in the details pane. */
   selectedTable: { schema: string; name: string } | null;
 
+  setActiveWorkspace: (id: string | null) => void;
   setActiveConnection: (id: string | null) => void;
   toggleSidebar: () => void;
   setMobileNavOpen: (open: boolean) => void;
@@ -34,12 +37,16 @@ export const useWorkspaceStore = create<WorkspaceState>()(
       connectionDialog: { open: false, editing: null },
       openConnectionDialog: (editing = null) => set({ connectionDialog: { open: true, editing } }),
       closeConnectionDialog: () => set((s) => ({ connectionDialog: { ...s.connectionDialog, open: false } })),
+      activeWorkspaceId: null,
       activeConnectionId: null,
       sidebarCollapsed: false,
       mobileNavOpen: false,
       maxRows: 1000,
       selectedTable: null,
 
+      // A different workspace has different connections.
+      setActiveWorkspace: (id) =>
+        set((s) => (s.activeWorkspaceId === id ? s : { activeWorkspaceId: id, activeConnectionId: null, selectedTable: null })),
       setActiveConnection: (id) => set({ activeConnectionId: id, selectedTable: null }),
       toggleSidebar: () => set((s) => ({ sidebarCollapsed: !s.sidebarCollapsed })),
       setMobileNavOpen: (open) => set({ mobileNavOpen: open }),
@@ -51,6 +58,7 @@ export const useWorkspaceStore = create<WorkspaceState>()(
       version: 1,
       storage: createJSONStorage(() => localStorage),
       partialize: (s) => ({
+        activeWorkspaceId: s.activeWorkspaceId,
         activeConnectionId: s.activeConnectionId,
         sidebarCollapsed: s.sidebarCollapsed,
         maxRows: s.maxRows,

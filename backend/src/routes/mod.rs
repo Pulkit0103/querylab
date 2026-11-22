@@ -29,7 +29,7 @@ const MAX_BODY_BYTES: usize = 2 * 1024 * 1024;
 pub fn build_router(state: AppState) -> Router {
     use handlers::{
         account, audit, auth, connections, data, data_jobs, diagrams, library, migrations,
-        monitoring, performance, query, schema, workspace,
+        monitoring, performance, query, schema, workspace, workspaces,
     };
 
     let api = Router::new()
@@ -78,6 +78,50 @@ pub fn build_router(state: AppState) -> Router {
         )
         .route("/connections/{id}/test", post(connections::test_saved))
         .route("/connections/{id}/duplicate", post(connections::duplicate))
+        .route("/connections/{id}/grants", get(connections::grants))
+        .route(
+            "/connections/{id}/grants/{user_id}",
+            axum::routing::put(connections::set_grant),
+        )
+        // Team workspaces
+        .route(
+            "/workspaces",
+            get(workspaces::list).post(workspaces::create),
+        )
+        .route(
+            "/workspaces/{id}",
+            get(workspaces::get)
+                .put(workspaces::rename)
+                .delete(workspaces::delete),
+        )
+        .route("/workspaces/{id}/members", get(workspaces::members))
+        .route(
+            "/workspaces/{id}/members/{user_id}",
+            axum::routing::put(workspaces::set_role).delete(workspaces::remove_member),
+        )
+        .route(
+            "/workspaces/{id}/invitations",
+            get(workspaces::invitations).post(workspaces::invite),
+        )
+        .route(
+            "/workspaces/{id}/invitations/{invitation_id}",
+            axum::routing::delete(workspaces::revoke_invitation),
+        )
+        .route("/invitations/{token}", get(workspaces::preview_invitation))
+        .route(
+            "/invitations/{token}/accept",
+            post(workspaces::accept_invitation),
+        )
+        .route(
+            "/snippets",
+            get(workspaces::list_snippets).post(workspaces::create_snippet),
+        )
+        .route(
+            "/snippets/{id}",
+            get(workspaces::get_snippet)
+                .put(workspaces::update_snippet)
+                .delete(workspaces::delete_snippet),
+        )
         .route(
             "/connection-groups",
             get(connections::list_groups).post(connections::create_group),

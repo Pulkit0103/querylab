@@ -36,6 +36,7 @@ use crate::{
             SourceColumn, TargetColumn, MAX_UPLOAD_CHUNK_BYTES,
         },
         library::HistoryKind,
+        workspaces::Access,
     },
     services::{
         auth::AuthUser,
@@ -664,8 +665,9 @@ impl<'a> ImportService<'a> {
         let job = self.job(user.user_id, id)?;
         let (layout, source, data, file_name) = self.analyzed(&job)?;
         let record = ConnectionService::new(self.state)
-            .get_record(user.user_id, job.connection_id)
-            .await?;
+            .require(user.user_id, job.connection_id, Access::Write)
+            .await?
+            .record;
         if record.read_only {
             return Err(AppError::Forbidden(
                 "This connection is read-only. Enable read-write mode in the connection settings to import data."

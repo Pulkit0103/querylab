@@ -3,6 +3,7 @@
 import { useInfiniteQuery, useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 
 import { api, ApiError } from "@/lib/api-client";
+import { useWorkspaceStore } from "@/stores/workspace-store";
 import type {
   Collection,
   HistoryEntry,
@@ -77,10 +78,15 @@ export interface SavedFilters {
   pinned?: boolean;
 }
 
+/** The active workspace, sent with library requests (server default: personal). */
+const useWs = () => useWorkspaceStore((s) => s.activeWorkspaceId) ?? undefined;
+const activeWs = () => useWorkspaceStore.getState().activeWorkspaceId ?? undefined;
+
 export function useSavedQueries(filters: SavedFilters, enabled = true) {
+  const workspace_id = useWs();
   return useQuery<SavedQuery[], ApiError>({
-    queryKey: libraryKeys.saved(filters),
-    queryFn: ({ signal }) => api.get<SavedQuery[]>("/api/queries", { signal, query: { ...filters } }),
+    queryKey: libraryKeys.saved({ ...filters, workspace_id }),
+    queryFn: ({ signal }) => api.get<SavedQuery[]>("/api/queries", { signal, query: { ...filters, workspace_id } }),
     enabled,
   });
 }
@@ -94,7 +100,7 @@ function invalidateSaved(qc: ReturnType<typeof useQueryClient>) {
 export function useCreateSavedQuery() {
   const qc = useQueryClient();
   return useMutation<SavedQuery, ApiError, SavedQueryInput>({
-    mutationFn: (body) => api.post<SavedQuery>("/api/queries", body),
+    mutationFn: (body) => api.post<SavedQuery>("/api/queries", { workspace_id: activeWs(), ...body }),
     onSuccess: () => invalidateSaved(qc),
   });
 }
@@ -124,25 +130,27 @@ export function useDeleteSavedQuery() {
 }
 
 export function useTags() {
+  const workspace_id = useWs();
   return useQuery<TagCount[], ApiError>({
-    queryKey: libraryKeys.tags,
-    queryFn: ({ signal }) => api.get<TagCount[]>("/api/tags", { signal }),
+    queryKey: [...libraryKeys.tags, workspace_id],
+    queryFn: ({ signal }) => api.get<TagCount[]>("/api/tags", { signal, query: { workspace_id } }),
   });
 }
 
 // -- folders ------------------------------------------------------------------
 
 export function useCollections() {
+  const workspace_id = useWs();
   return useQuery<Collection[], ApiError>({
-    queryKey: libraryKeys.collections,
-    queryFn: ({ signal }) => api.get<Collection[]>("/api/collections", { signal }),
+    queryKey: [...libraryKeys.collections, workspace_id],
+    queryFn: ({ signal }) => api.get<Collection[]>("/api/collections", { signal, query: { workspace_id } }),
   });
 }
 
 export function useCreateCollection() {
   const qc = useQueryClient();
   return useMutation<Collection, ApiError, { name: string; parent_id?: string | null }>({
-    mutationFn: (body) => api.post<Collection>("/api/collections", body),
+    mutationFn: (body) => api.post<Collection>("/api/collections", { workspace_id: activeWs(), ...body }),
     onSuccess: () => void qc.invalidateQueries({ queryKey: libraryKeys.collections }),
   });
 }

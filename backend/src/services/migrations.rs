@@ -26,6 +26,7 @@ use crate::{
             CreateMigrationRequest, Direction, Migration, MigrationRun, Project, RunOutcome,
             StatusResponse, UpdateMigrationRequest,
         },
+        workspaces::Access,
     },
     services::{
         connections::ConnectionService,
@@ -326,8 +327,9 @@ impl<'a> MigrationService<'a> {
             })?,
         };
         let record = ConnectionService::new(self.state)
-            .get_record(user_id, connection_id)
-            .await?;
+            .require(user_id, connection_id, Access::Write)
+            .await?
+            .record;
         if record.read_only {
             return Err(AppError::Forbidden(READ_ONLY_CONNECTION.into()));
         }

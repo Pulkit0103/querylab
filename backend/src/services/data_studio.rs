@@ -26,6 +26,7 @@ use crate::{
             PreviewStatement, DEFAULT_PAGE_SIZE,
         },
         library::HistoryKind,
+        workspaces::Access,
     },
     services::{
         auth::AuthUser,
@@ -273,12 +274,12 @@ impl<'a> DataStudioService<'a> {
         &self,
         user_id: Uuid,
         connection_id: Uuid,
-    ) -> AppResult<(PgConnection, ConnectionRecord)> {
-        let record = ConnectionService::new(self.state)
-            .get_record(user_id, connection_id)
+    ) -> AppResult<(PgConnection, ConnectionRecord, Access)> {
+        let a = ConnectionService::new(self.state)
+            .require(user_id, connection_id, Access::Read)
             .await?;
-        let conn = self.connect(&record, true).await?;
-        Ok((conn, record))
+        let conn = self.connect(&a.record, true).await?;
+        Ok((conn, a.record, a.access))
     }
 
     pub async fn browse(
@@ -289,7 +290,7 @@ impl<'a> DataStudioService<'a> {
     ) -> AppResult<BrowseResponse> {
         self.state.query_limiter.check(&user.user_id.to_string())?;
         let cursor = req.cursor.as_deref().map(Cursor::decode).transpose()?;
-        let (mut conn, record) = self.open_read_only(user.user_id, connection_id).await?;
+        let (mut conn, record, access) = self.open_read_only(user.user_id, connection_id).await?;
         let (table, oid) = load_table(&mut conn, &req.schema, &req.table).await?;
         let q = RowQuery {
             filter: req.filter.as_ref(),
@@ -396,6 +397,8 @@ impl<'a> DataStudioService<'a> {
 
         let read_only_reason = if record.read_only {
             Some(READ_ONLY_CONNECTION.to_string())
+        } else if access < Access::Write {
+            Some("You have read-only access to this connection.".to_string())
         } else {
             table.read_only_reason().map(str::to_string)
         };
@@ -435,7 +438,7 @@ impl<'a> DataStudioService<'a> {
         self.state
             .connect_limiter
             .check(&user.user_id.to_string())?;
-        let (mut conn, _) = self.open_read_only(user.user_id, connection_id).await?;
+        let (mut conn, _, _) = self.open_read_only(user.user_id, connection_id).await?;
         let loaded = load_table(&mut conn, &req.schema, &req.table).await;
         close(conn).await;
         let (table, _) = loaded?;
@@ -476,8 +479,9 @@ impl<'a> DataStudioService<'a> {
     ) -> AppResult<ApplyResponse> {
         self.state.query_limiter.check(&user.user_id.to_string())?;
         let record = ConnectionService::new(self.state)
-            .get_record(user.user_id, connection_id)
-            .await?;
+            .require(user.user_id, connection_id, Access::Write)
+            .await?
+            .record;
         if record.read_only {
             return Err(AppError::Forbidden(READ_ONLY_CONNECTION.into()));
         }
@@ -629,6 +633,7 @@ mod tests {
         ConnectionRecord {
             id: Uuid::new_v4(),
             user_id: Uuid::new_v4(),
+            workspace_id: Uuid::new_v4(),
             name: name.into(),
             database_type: "postgresql".into(),
             host: "db".into(),
