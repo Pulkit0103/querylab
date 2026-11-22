@@ -286,7 +286,7 @@ impl<'a> MockDataService<'a> {
         connection_id: Uuid,
         req: &MockRequest,
     ) -> AppResult<MockPreview> {
-        self.state.query_limiter.check(&user_id.to_string())?;
+        self.state.query_limiter.check(&user_id.to_string()).await?;
         let record = ConnectionService::new(self.state)
             .get_record(user_id, connection_id)
             .await?;
@@ -316,7 +316,10 @@ impl<'a> MockDataService<'a> {
         connection_id: Uuid,
         req: &MockRequest,
     ) -> AppResult<JobView> {
-        self.state.query_limiter.check(&user.user_id.to_string())?;
+        self.state
+            .query_limiter
+            .check(&user.user_id.to_string())
+            .await?;
         let record = ConnectionService::new(self.state)
             .require(user.user_id, connection_id, Access::Write)
             .await?

@@ -2,7 +2,22 @@
 #
 #   docker compose up -d            -> metadata DB (5432) + sample target DB (5433)
 #   docker compose --profile full up -> also builds and runs the API container
+#   docker compose --profile redis up -d -> also Redis (6379) for shared limits
 services:
+  # Optional: shares rate limits and running queries between API instances
+  # (set REDIS_URL=redis://127.0.0.1:6379).
+  redis:
+    image: redis:7-alpine
+    profiles: ["redis", "full"]
+    restart: unless-stopped
+    ports:
+      - "6379:6379"
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+
   metadata-db:
     image: postgres:17-alpine
     restart: unless-stopped
@@ -47,8 +62,11 @@ services:
     depends_on:
       metadata-db:
         condition: service_healthy
+      redis:
+        condition: service_healthy
     environment:
       DATABASE_URL: postgres://querylab:querylab@metadata-db:5432/querylab
+      REDIS_URL: redis://redis:6379
       # Development key and plain HTTP: run in development mode locally.
       APP_ENV: development
       LOG_FORMAT: json

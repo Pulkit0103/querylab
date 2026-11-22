@@ -56,7 +56,7 @@ pub async fn register(
     headers: HeaderMap,
     ValidatedJson(req): ValidatedJson<RegisterRequest>,
 ) -> AppResult<Response> {
-    state.auth_limiter.check(&format!("register:{ip}"))?;
+    state.auth_limiter.check(&format!("register:{ip}")).await?;
     let (user, session) = AuthService::new(&state)
         .register(req, user_agent(&headers))
         .await?;
@@ -75,10 +75,11 @@ pub async fn login(
     ValidatedJson(req): ValidatedJson<LoginRequest>,
 ) -> AppResult<Response> {
     // Limit per IP and per account to slow down both spraying and targeted guessing.
-    state.auth_limiter.check(&format!("login-ip:{ip}"))?;
+    state.auth_limiter.check(&format!("login-ip:{ip}")).await?;
     state
         .auth_limiter
-        .check(&format!("login-user:{}", req.email.trim().to_lowercase()))?;
+        .check(&format!("login-user:{}", req.email.trim().to_lowercase()))
+        .await?;
     match AuthService::new(&state)
         .login(req, user_agent(&headers))
         .await?
@@ -104,7 +105,7 @@ pub async fn login_two_factor(
     headers: HeaderMap,
     ValidatedJson(req): ValidatedJson<TwoFactorLoginRequest>,
 ) -> AppResult<Response> {
-    state.auth_limiter.check(&format!("login-2fa:{ip}"))?;
+    state.auth_limiter.check(&format!("login-2fa:{ip}")).await?;
     let (user, session) = AuthService::new(&state)
         .login_second_factor(&req.challenge, &req.code, user_agent(&headers))
         .await?;

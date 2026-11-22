@@ -32,6 +32,7 @@ use crate::{
     services::{
         auth::AuthUser,
         connections::ConnectionService,
+        shared_state::{Registered, SharedStore},
         target_db::{self, TargetSpec},
         value_decode::{decode_cell, type_label},
     },
@@ -55,20 +56,41 @@ struct Running {
     cancel_requested: bool,
 }
 
+/// Running executions. With a shared store attached (Redis), per-user
+/// concurrency is counted across instances and any instance can cancel an
+/// execution; this instance's map is the fallback and feeds `/metrics`.
 #[derive(Default)]
 pub struct ExecutionRegistry {
     inner: Mutex<HashMap<Uuid, Running>>,
+    /// The store and how long an entry may live there (a crashed instance
+    /// cannot leak concurrency slots forever).
+    shared: std::sync::OnceLock<(SharedStore, Duration)>,
 }
 
 /// Removes the registry entry when the execution finishes, however it ends.
 pub struct ExecutionGuard {
     registry: Arc<ExecutionRegistry>,
     id: Uuid,
+    user_id: Uuid,
+    shared: bool,
 }
 
 impl Drop for ExecutionGuard {
     fn drop(&mut self) {
         self.registry.lock().remove(&self.id);
+        if self.shared {
+            if let (Some((store, _)), Ok(handle)) = (
+                self.registry.shared.get(),
+                tokio::runtime::Handle::try_current(),
+            ) {
+                let (store, id, user) = (store.clone(), self.id, self.user_id);
+                handle.spawn(async move {
+                    if let Err(err) = store.remove_execution(id, user).await {
+                        tracing::warn!(error = %err, "failed to remove shared execution entry");
+                    }
+                });
+            }
+        }
     }
 }
 
@@ -77,26 +99,24 @@ impl ExecutionRegistry {
         self.inner.lock().unwrap_or_else(|p| p.into_inner())
     }
 
-    pub fn register(
+    /// The shared store, when one is attached.
+    pub fn shared(&self) -> Option<&SharedStore> {
+        self.shared.get().map(|(s, _)| s)
+    }
+
+    /// Shares state through `store`; entries expire after `ttl`.
+    pub fn attach(&self, store: SharedStore, ttl: Duration) {
+        let _ = self.shared.set((store, ttl));
+    }
+
+    fn insert_local(
         self: &Arc<Self>,
         id: Uuid,
         user_id: Uuid,
         connection_id: Uuid,
-        max_per_user: usize,
-    ) -> AppResult<ExecutionGuard> {
-        let mut map = self.lock();
-        if map.contains_key(&id) {
-            return Err(AppError::Conflict(
-                "an execution with this id is already running".into(),
-            ));
-        }
-        let running = map.values().filter(|r| r.user_id == user_id).count();
-        if running >= max_per_user {
-            return Err(AppError::RateLimited {
-                retry_after_secs: 1,
-            });
-        }
-        map.insert(
+        shared: bool,
+    ) -> ExecutionGuard {
+        self.lock().insert(
             id,
             Running {
                 user_id,
@@ -105,29 +125,105 @@ impl ExecutionRegistry {
                 cancel_requested: false,
             },
         );
-        Ok(ExecutionGuard {
+        ExecutionGuard {
             registry: Arc::clone(self),
             id,
-        })
-    }
-
-    fn set_pid(&self, id: Uuid, pid: i32) {
-        if let Some(r) = self.lock().get_mut(&id) {
-            r.pid = pid;
+            user_id,
+            shared,
         }
     }
 
-    fn was_cancelled(&self, id: Uuid) -> bool {
-        self.lock().get(&id).is_some_and(|r| r.cancel_requested)
+    pub async fn register(
+        self: &Arc<Self>,
+        id: Uuid,
+        user_id: Uuid,
+        connection_id: Uuid,
+        max_per_user: usize,
+    ) -> AppResult<ExecutionGuard> {
+        let duplicate =
+            || AppError::Conflict("an execution with this id is already running".into());
+        if self.lock().contains_key(&id) {
+            return Err(duplicate());
+        }
+        if let Some((store, ttl)) = self.shared.get() {
+            match store
+                .register_execution(id, user_id, connection_id, max_per_user, *ttl)
+                .await
+            {
+                Ok(Registered::Ok) => {
+                    return Ok(self.insert_local(id, user_id, connection_id, true))
+                }
+                Ok(Registered::LimitReached) => {
+                    return Err(AppError::RateLimited {
+                        retry_after_secs: 1,
+                    })
+                }
+                Ok(Registered::Duplicate) => return Err(duplicate()),
+                Err(err) => {
+                    tracing::warn!(error = %err, "shared execution registry unavailable; counting locally")
+                }
+            }
+        }
+        let running = self
+            .lock()
+            .values()
+            .filter(|r| r.user_id == user_id)
+            .count();
+        if running >= max_per_user {
+            return Err(AppError::RateLimited {
+                retry_after_secs: 1,
+            });
+        }
+        Ok(self.insert_local(id, user_id, connection_id, false))
     }
 
-    /// Flags the execution as cancelled and returns its connection and pid.
-    /// Only the owning user can cancel; others get `None` (→ 404).
-    fn request_cancel(&self, id: Uuid, user_id: Uuid) -> Option<(Uuid, i32)> {
-        let mut map = self.lock();
-        let r = map.get_mut(&id).filter(|r| r.user_id == user_id)?;
-        r.cancel_requested = true;
-        Some((r.connection_id, r.pid))
+    async fn set_pid(&self, id: Uuid, pid: i32) {
+        let user = {
+            let mut map = self.lock();
+            let Some(r) = map.get_mut(&id) else { return };
+            r.pid = pid;
+            r.user_id
+        };
+        if let Some((store, _)) = self.shared.get() {
+            if let Err(err) = store.set_pid(id, user, pid).await {
+                tracing::warn!(error = %err, "failed to share execution pid");
+            }
+        }
+    }
+
+    async fn was_cancelled(&self, id: Uuid) -> bool {
+        let (local, user) = match self.lock().get(&id) {
+            Some(r) => (r.cancel_requested, r.user_id),
+            None => return false,
+        };
+        if local {
+            return true;
+        }
+        match self.shared.get() {
+            Some((store, _)) => store.was_cancelled(id, user).await.unwrap_or(false),
+            None => false,
+        }
+    }
+
+    /// Flags the execution as cancelled, on whichever instance runs it, and
+    /// returns its connection and pid. Only the owning user can cancel;
+    /// others get `None` (→ 404).
+    async fn request_cancel(&self, id: Uuid, user_id: Uuid) -> Option<(Uuid, i32)> {
+        let local = {
+            let mut map = self.lock();
+            map.get_mut(&id).filter(|r| r.user_id == user_id).map(|r| {
+                r.cancel_requested = true;
+                (r.connection_id, r.pid)
+            })
+        };
+        if let Some((store, _)) = self.shared.get() {
+            match store.request_cancel(id, user_id).await {
+                Ok(Some(found)) => return Some(found),
+                Ok(None) => {}
+                Err(err) => tracing::warn!(error = %err, "shared cancellation unavailable"),
+            }
+        }
+        local
     }
 
     /// Executions in progress on this instance.
@@ -142,7 +238,6 @@ impl ExecutionRegistry {
             .count()
     }
 }
-
 // ---------------------------------------------------------------------------
 // Execution
 // ---------------------------------------------------------------------------
@@ -247,7 +342,7 @@ async fn open_registered(
     execution_id: Uuid,
     force_read_only: bool,
 ) -> AppResult<(PgConnection, bool, ExecutionGuard)> {
-    state.query_limiter.check(&user.user_id.to_string())?;
+    state.query_limiter.check(&user.user_id.to_string()).await?;
     let service = ConnectionService::new(state);
     let access = service
         .require(user.user_id, connection_id, Access::Read)
@@ -256,12 +351,15 @@ async fn open_registered(
     // connection's own setting.
     let force_read_only = force_read_only || access.access < Access::Write;
     let record = access.record;
-    let guard = state.executions.register(
-        execution_id,
-        user.user_id,
-        record.id,
-        state.config.max_concurrent_queries_per_user,
-    )?;
+    let guard = state
+        .executions
+        .register(
+            execution_id,
+            user.user_id,
+            record.id,
+            state.config.max_concurrent_queries_per_user,
+        )
+        .await?;
     let secret = service.decrypt_secret(&record)?;
     let mut spec = TargetSpec::from_record(&record, &secret);
     let read_only = force_read_only || record.read_only;
@@ -271,8 +369,8 @@ async fn open_registered(
         .fetch_one(&mut conn)
         .await
         .map_err(target_db::query_error)?;
-    state.executions.set_pid(execution_id, pid);
-    if state.executions.was_cancelled(execution_id) {
+    state.executions.set_pid(execution_id, pid).await;
+    if state.executions.was_cancelled(execution_id).await {
         close(conn).await;
         return Err(AppError::QueryCancelled {
             execution_time_ms: 0,
@@ -281,7 +379,7 @@ async fn open_registered(
     Ok((conn, read_only, guard))
 }
 
-fn map_execution_error(
+async fn map_execution_error(
     state: &AppState,
     execution_id: Uuid,
     err: sqlx::Error,
@@ -290,7 +388,7 @@ fn map_execution_error(
 ) -> AppError {
     if let sqlx::Error::Database(db) = &err {
         if db.code().as_deref() == Some(SQLSTATE_QUERY_CANCELED) {
-            return if state.executions.was_cancelled(execution_id) {
+            return if state.executions.was_cancelled(execution_id).await {
                 AppError::QueryCancelled {
                     execution_time_ms: elapsed_ms,
                 }
@@ -329,7 +427,7 @@ pub async fn execute(
     begin(&mut conn, read_only, timeout).await?;
     // A cancel that arrived while the backend was idle between setup
     // statements is ignored by PostgreSQL; honour it here instead.
-    if state.executions.was_cancelled(execution_id) {
+    if state.executions.was_cancelled(execution_id).await {
         drop(conn);
         return Err(AppError::QueryCancelled {
             execution_time_ms: 0,
@@ -345,13 +443,7 @@ pub async fn execute(
         Err(err) => {
             // Dropping the connection aborts the transaction server-side.
             drop(conn);
-            return Err(map_execution_error(
-                state,
-                execution_id,
-                err,
-                timeout,
-                elapsed_ms,
-            ));
+            return Err(map_execution_error(state, execution_id, err, timeout, elapsed_ms).await);
         }
     };
 
@@ -363,13 +455,7 @@ pub async fn execute(
         let end = if read_only { "ROLLBACK" } else { "COMMIT" };
         if let Err(err) = conn.execute(end).await {
             drop(conn);
-            return Err(map_execution_error(
-                state,
-                execution_id,
-                err,
-                timeout,
-                elapsed_ms,
-            ));
+            return Err(map_execution_error(state, execution_id, err, timeout, elapsed_ms).await);
         }
         close(conn).await;
     }
@@ -426,13 +512,7 @@ pub async fn explain(
         Ok(v) => v,
         Err(err) => {
             drop(conn);
-            return Err(map_execution_error(
-                state,
-                execution_id,
-                err,
-                timeout,
-                elapsed_ms,
-            ));
+            return Err(map_execution_error(state, execution_id, err, timeout, elapsed_ms).await);
         }
     };
     let _ = conn.execute("ROLLBACK").await;
@@ -453,6 +533,7 @@ pub async fn cancel(state: &AppState, user: &AuthUser, execution_id: Uuid) -> Ap
     let (connection_id, pid) = state
         .executions
         .request_cancel(execution_id, user.user_id)
+        .await
         .ok_or(AppError::NotFound("execution"))?;
     if pid == 0 {
         // Still connecting; the execution checks the flag before running.
@@ -478,33 +559,36 @@ pub async fn cancel(state: &AppState, user: &AuthUser, execution_id: Uuid) -> Ap
 mod tests {
     use super::*;
 
-    #[test]
-    fn registry_enforces_ownership_and_concurrency() {
+    #[tokio::test]
+    async fn registry_enforces_ownership_and_concurrency() {
         let registry = Arc::new(ExecutionRegistry::default());
         let (alice, bob, conn) = (Uuid::new_v4(), Uuid::new_v4(), Uuid::new_v4());
         let a1 = Uuid::new_v4();
-        let g1 = registry.register(a1, alice, conn, 2).unwrap();
-        let _g2 = registry.register(Uuid::new_v4(), alice, conn, 2).unwrap();
+        let g1 = registry.register(a1, alice, conn, 2).await.unwrap();
+        let _g2 = registry
+            .register(Uuid::new_v4(), alice, conn, 2)
+            .await
+            .unwrap();
         assert!(matches!(
-            registry.register(Uuid::new_v4(), alice, conn, 2),
+            registry.register(Uuid::new_v4(), alice, conn, 2).await,
             Err(AppError::RateLimited { .. })
         ));
         assert!(matches!(
-            registry.register(a1, bob, conn, 2),
+            registry.register(a1, bob, conn, 2).await,
             Err(AppError::Conflict(_))
         ));
 
-        registry.set_pid(a1, 42);
+        registry.set_pid(a1, 42).await;
         assert_eq!(
-            registry.request_cancel(a1, bob),
+            registry.request_cancel(a1, bob).await,
             None,
             "other users cannot cancel"
         );
-        assert_eq!(registry.request_cancel(a1, alice), Some((conn, 42)));
-        assert!(registry.was_cancelled(a1));
+        assert_eq!(registry.request_cancel(a1, alice).await, Some((conn, 42)));
+        assert!(registry.was_cancelled(a1).await);
 
         drop(g1);
         assert_eq!(registry.running_for_user(alice), 1);
-        assert!(!registry.was_cancelled(a1));
+        assert!(!registry.was_cancelled(a1).await);
     }
 }

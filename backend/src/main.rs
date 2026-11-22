@@ -42,7 +42,23 @@ async fn run() -> Result<(), Box<dyn std::error::Error>> {
     }
 
     let addr = config.bind_addr;
-    let app = build_router(AppState::new(config, pool));
+    let redis = config.redis_url.clone();
+    let prefix = config.redis_prefix.clone();
+    let state = AppState::new(config, pool);
+    if let Some(url) = redis {
+        // A Redis outage must not stop the API: it falls back to
+        // per-instance limits (fine for a single instance).
+        match querylab_api::services::shared_state::SharedStore::connect(&url, &prefix).await {
+            Ok(store) => {
+                state.attach_shared(store);
+                tracing::info!("rate limits and executions are shared through Redis");
+            }
+            Err(err) => {
+                tracing::error!(error = %err, "could not connect to Redis; using per-instance state")
+            }
+        }
+    }
+    let app = build_router(state);
 
     let listener = TcpListener::bind(addr).await?;
     tracing::info!(%addr, "QueryLab API listening");

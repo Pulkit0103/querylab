@@ -464,7 +464,10 @@ impl<'a> ExportService<'a> {
         src: &TableSource,
         format: ExportFormat,
     ) -> AppResult<ExportStream> {
-        self.state.query_limiter.check(&user.user_id.to_string())?;
+        self.state
+            .query_limiter
+            .check(&user.user_id.to_string())
+            .await?;
         let mut conn = self.open(user.user_id, connection_id).await?;
         let prepared = async {
             let (table, _) = load_table(&mut conn, &src.schema, &src.table).await?;
@@ -534,13 +537,20 @@ impl<'a> ExportService<'a> {
         name: Option<&str>,
         format: ExportFormat,
     ) -> AppResult<ExportStream> {
-        self.state.query_limiter.check(&user.user_id.to_string())?;
-        let guard = self.state.executions.register(
-            Uuid::new_v4(),
-            user.user_id,
-            connection_id,
-            self.state.config.max_concurrent_queries_per_user,
-        )?;
+        self.state
+            .query_limiter
+            .check(&user.user_id.to_string())
+            .await?;
+        let guard = self
+            .state
+            .executions
+            .register(
+                Uuid::new_v4(),
+                user.user_id,
+                connection_id,
+                self.state.config.max_concurrent_queries_per_user,
+            )
+            .await?;
         let mut conn = self.open(user.user_id, connection_id).await?;
         self.begin(&mut conn).await?;
 

@@ -7,7 +7,8 @@ services:
     rootDir: backend
     dockerfilePath: ./Dockerfile
     plan: starter
-    # In-memory rate limits and query cancellation assume one instance.
+    # Without REDIS_URL, rate limits and query cancellation are per instance:
+    # keep one instance. With Redis configured, this can be raised.
     numInstances: 1
     healthCheckPath: /health
     autoDeploy: true
@@ -58,4 +59,8 @@ services:
         sync: false
       # ERROR-level events are posted here as JSON (e.g. a Slack webhook).
       - key: ERROR_WEBHOOK_URL
+        sync: false
+      # Shared rate limits and execution registry for several instances,
+      # e.g. rediss://default:<token>@<host>.upstash.io:6379. Optional.
+      - key: REDIS_URL
         sync: false

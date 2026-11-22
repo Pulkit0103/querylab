@@ -104,6 +104,11 @@ pub struct Config {
     pub error_webhook_url: Option<String>,
     /// Audit events older than this are purged; 0 keeps them forever.
     pub audit_retention_days: u32,
+    /// Redis for state shared by several API instances (rate limits and
+    /// running executions). Without it, state is per instance.
+    pub redis_url: Option<String>,
+    /// Key prefix in Redis, so deployments can share a server.
+    pub redis_prefix: String,
 }
 
 /// How emails (password resets, invitations) are delivered.
@@ -288,6 +293,8 @@ impl Config {
             metrics_token,
             error_webhook_url: optional("ERROR_WEBHOOK_URL"),
             audit_retention_days: parse_or("AUDIT_RETENTION_DAYS", 365)?,
+            redis_url: optional("REDIS_URL"),
+            redis_prefix: optional("REDIS_PREFIX").unwrap_or_else(|| "querylab".into()),
         })
     }
 
@@ -334,6 +341,8 @@ impl Config {
             metrics_token: None,
             error_webhook_url: None,
             audit_retention_days: 365,
+            redis_url: None,
+            redis_prefix: "querylab".into(),
         }
     }
 }

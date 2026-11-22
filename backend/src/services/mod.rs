@@ -26,6 +26,7 @@ pub mod monitoring;
 pub mod performance;
 pub mod schema;
 pub mod schema_diff;
+pub mod shared_state;
 pub mod sql_builder;
 pub mod target_db;
 pub mod value_decode;

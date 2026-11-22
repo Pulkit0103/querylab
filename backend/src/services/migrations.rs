@@ -207,7 +207,8 @@ impl<'a> MigrationService<'a> {
     async fn connect(&self, record: &ConnectionRecord, read_only: bool) -> AppResult<PgConnection> {
         self.state
             .connect_limiter
-            .check(&record.user_id.to_string())?;
+            .check(&record.user_id.to_string())
+            .await?;
         let service = ConnectionService::new(self.state);
         let secret = service.decrypt_secret(record)?;
         let mut spec = TargetSpec::from_record(record, &secret);
