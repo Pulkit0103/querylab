@@ -129,6 +129,11 @@ The repository includes a Blueprint (`render.yaml`).
 | `REQUEST_TIMEOUT_SECS`, `QUERY_*`, `*_RATE_LIMIT_*` | defaults | see the README configuration table |
 | `IMPORT_MAX_BYTES` / `IMPORT_MEMORY_BUDGET_BYTES` | `52428800` / `157286400` | uploads are held in memory; keep the budget well below the instance's RAM |
 | `MOCK_DATA_ALLOW_PRODUCTION` | `false` | leave unset: mock data is refused on production connections |
+| `APP_BASE_URL` | `https://<your-app>.vercel.app` | used in password reset links |
+| `EMAIL_PROVIDER` / `RESEND_API_KEY` / `EMAIL_FROM` | `resend` / key / sender | optional; without them password reset is off (`log` is refused in production) |
+| `METRICS_TOKEN` | 16+ random characters | optional; enables `GET /metrics` on the API origin for Prometheus |
+| `ERROR_WEBHOOK_URL` | e.g. a Slack incoming webhook | optional; receives ERROR events as JSON |
+| `AUDIT_RETENTION_DAYS` | `365` | audit events older than this are purged daily (`0` keeps them) |
 
 **`TRUSTED_PROXY_HOPS`** decides which `X-Forwarded-For` entry counts as
 the client address for rate limiting.
@@ -161,6 +166,10 @@ the client address for rate limiting.
   logs to your log tool, such as Render log streams or Railway log drains,
   and alert on `level=ERROR`.
 - Users see the `request_id` as a "reference" in error messages.
+- With `METRICS_TOKEN` set, scrape `https://<api-origin>/metrics` with
+  `Authorization: Bearer <token>` (the route is not proxied by Vercel).
+- With `ERROR_WEBHOOK_URL` set, ERROR events are also pushed to that URL
+  (at most 30 per minute), so alerts do not depend on log forwarding.
 
 ## Production smoke test
 

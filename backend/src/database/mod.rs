@@ -2,6 +2,8 @@
 //! repositories. Repositories contain SQL only; business rules live in
 //! `services`. All statements are parameterised.
 
+pub mod account;
+pub mod audit;
 pub mod connections;
 pub mod data_jobs;
 pub mod diagrams;

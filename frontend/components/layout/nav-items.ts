@@ -9,6 +9,7 @@ import {
   History,
   LayoutDashboard,
   Network,
+  ScrollText,
   Settings,
   SquareTerminal,
   Table2,
@@ -34,5 +35,6 @@ export const navItems: NavItem[] = [
   { href: "/data", label: "Import / Export", icon: ArrowDownUp },
   { href: "/saved", label: "Saved Queries", icon: Bookmark },
   { href: "/history", label: "Query History", icon: History },
+  { href: "/audit", label: "Audit Logs", icon: ScrollText },
   { href: "/settings", label: "Settings", icon: Settings },
 ];

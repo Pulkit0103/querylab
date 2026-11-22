@@ -47,6 +47,10 @@ base64 = "0.22"
 zeroize = { version = "1", features = ["serde", "zeroize_derive"] }
 csv = "1"
 rust_xlsxwriter = { version = "0.92.0", features = ["constant_memory"] }
+hmac = "0.12"
+sha1 = "0.10"
+reqwest = { version = "0.13.3", default-features = false, features = ["json", "native-tls"] }
+qrcode = { version = "0.14.1", default-features = false, features = ["svg"] }
 
 [dev-dependencies]
 http-body-util = "0.1"

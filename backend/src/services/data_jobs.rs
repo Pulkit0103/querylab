@@ -220,7 +220,14 @@ impl DataJobs {
         lock(&self.jobs).remove(&id);
     }
 
-    #[doc(hidden)]
+    /// Jobs not finished yet (uploading, ready or running).
+    pub fn active(&self) -> usize {
+        lock(&self.jobs)
+            .values()
+            .filter(|j| !j.status().is_finished())
+            .count()
+    }
+
     pub fn reserved_bytes(&self) -> usize {
         *lock(&self.reserved)
     }

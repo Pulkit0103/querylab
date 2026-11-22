@@ -11,6 +11,7 @@ export interface User {
   email: string;
   display_name: string | null;
   created_at: string;
+  two_factor_enabled: boolean;
 }
 
 export interface FieldError {

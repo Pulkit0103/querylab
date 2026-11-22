@@ -4,8 +4,8 @@ use sqlx::PgPool;
 
 use crate::{
     config::Config,
-    middleware::rate_limit::RateLimiter,
-    services::{data_jobs::DataJobs, execution::ExecutionRegistry},
+    middleware::{metrics::Metrics, rate_limit::RateLimiter},
+    services::{data_jobs::DataJobs, execution::ExecutionRegistry, mailer::Mailer},
     utils::crypto::CredentialCipher,
 };
 
@@ -30,6 +30,8 @@ pub struct AppState {
     pub executions: Arc<ExecutionRegistry>,
     /// Imports and mock data runs in progress.
     pub jobs: Arc<DataJobs>,
+    pub mailer: Arc<Mailer>,
+    pub metrics: Arc<Metrics>,
 }
 
 impl AppState {
@@ -43,6 +45,7 @@ impl AppState {
         // The UI refreshes every 5 s at most; leave room for manual refreshes.
         let monitor_limiter = RateLimiter::new(MONITOR_REFRESHES_PER_MINUTE, minute);
         let jobs = Arc::new(DataJobs::new(config.import_memory_budget));
+        let mailer = Arc::new(Mailer::new(config.email.clone()));
         Self {
             config: Arc::new(config),
             db,
@@ -53,6 +56,8 @@ impl AppState {
             monitor_limiter: Arc::new(monitor_limiter),
             executions: Arc::new(ExecutionRegistry::default()),
             jobs,
+            mailer,
+            metrics: Arc::new(Metrics::default()),
         }
     }
 }

@@ -4,6 +4,7 @@ use axum::{
     response::{IntoResponse, Response},
     Json,
 };
+use serde_json::json;
 
 use crate::{
     errors::AppResult,
@@ -12,18 +13,26 @@ use crate::{
         client_ip::ClientIp,
     },
     models::{
-        auth::{LoginRequest, RegisterRequest},
+        auth::{LoginRequest, RegisterRequest, TwoFactorLoginRequest},
         user::UserResponse,
     },
-    services::auth::{AuthService, AuthUser, IssuedSession},
+    services::auth::{AuthService, AuthUser, IssuedSession, LoginOutcome},
     state::AppState,
     utils::validation::ValidatedJson,
 };
 
-fn user_agent(headers: &HeaderMap) -> Option<&str> {
+pub(crate) fn user_agent(headers: &HeaderMap) -> Option<&str> {
     headers
         .get(header::USER_AGENT)
         .and_then(|v| v.to_str().ok())
+}
+
+pub(crate) fn no_store(mut res: Response) -> Response {
+    res.headers_mut().insert(
+        header::CACHE_CONTROL,
+        "no-store".parse().expect("static header"),
+    );
+    res
 }
 
 fn with_session(
@@ -38,11 +47,7 @@ fn with_session(
         session_cookie(&session.token, session.expires_at, secure),
     );
     // Responses that set credentials must never be cached.
-    res.headers_mut().insert(
-        header::CACHE_CONTROL,
-        "no-store".parse().expect("static header"),
-    );
-    res
+    no_store(res)
 }
 
 pub async fn register(
@@ -74,8 +79,34 @@ pub async fn login(
     state
         .auth_limiter
         .check(&format!("login-user:{}", req.email.trim().to_lowercase()))?;
-    let (user, session) = AuthService::new(&state)
+    match AuthService::new(&state)
         .login(req, user_agent(&headers))
+        .await?
+    {
+        LoginOutcome::Session(user, session) => Ok(with_session(
+            StatusCode::OK,
+            user,
+            &session,
+            state.config.cookie_secure,
+        )),
+        // No session yet: the client asks for a code and finishes with
+        // `POST /auth/login/2fa`.
+        LoginOutcome::TwoFactor { challenge } => Ok(no_store(
+            Json(json!({ "two_factor_required": true, "challenge": challenge.as_str() }))
+                .into_response(),
+        )),
+    }
+}
+
+pub async fn login_two_factor(
+    State(state): State<AppState>,
+    ClientIp(ip): ClientIp,
+    headers: HeaderMap,
+    ValidatedJson(req): ValidatedJson<TwoFactorLoginRequest>,
+) -> AppResult<Response> {
+    state.auth_limiter.check(&format!("login-2fa:{ip}"))?;
+    let (user, session) = AuthService::new(&state)
+        .login_second_factor(&req.challenge, &req.code, user_agent(&headers))
         .await?;
     Ok(with_session(
         StatusCode::OK,
@@ -86,7 +117,7 @@ pub async fn login(
 }
 
 pub async fn logout(State(state): State<AppState>, user: AuthUser) -> AppResult<Response> {
-    AuthService::new(&state).logout(user.session_id).await?;
+    AuthService::new(&state).logout(&user).await?;
     let mut res = StatusCode::NO_CONTENT.into_response();
     res.headers_mut().insert(
         header::SET_COOKIE,
@@ -100,4 +131,9 @@ pub async fn me(State(state): State<AppState>, user: AuthUser) -> AppResult<Json
         .await?
         .ok_or(crate::errors::AppError::Unauthorized)?;
     Ok(Json(UserResponse::from(&record)))
+}
+
+/// Public: which optional account features this server offers.
+pub async fn options(State(state): State<AppState>) -> Json<serde_json::Value> {
+    Json(json!({ "password_reset": state.mailer.is_enabled() }))
 }

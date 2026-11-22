@@ -955,6 +955,15 @@ The API configuration also gets a new upload limit, `IMPORT_MAX_BYTES`
 ## Phase 10 — Security, Collaboration & Deployment
 
 **Goal:** a SaaS-ready platform.
+**Status:** ◐ in progress, delivered in three parts: 10a account security,
+audit log and operations (✅ delivered); 10b workspaces and permissions;
+10c shared limits and end-to-end tests.
+
+> **Implementation notes (10a):**
+> - TOTP is implemented directly (RFC 6238 with `hmac`/`sha1`, base32 included) and the enrolment QR code is rendered server-side as SVG (`qrcode`). Ten one-time recovery codes are stored as SHA-256 hashes. A login with 2FA returns `{two_factor_required, challenge}` (a 5-minute, 5-attempt token stored hashed) and is finished by `POST /api/auth/login/2fa`; the plan's `/2fa/verify` confirms enrolment.
+> - Email uses a small provider abstraction over `reqwest`: Resend, the log (development only; refused in production because it would log reset links) or disabled. Without a provider, password reset is unavailable and the UI hides it (`GET /api/auth/options`).
+> - Audit immutability: a `BEFORE UPDATE OR DELETE` trigger (and a `TRUNCATE` trigger) rejects changes, and `UPDATE`/`TRUNCATE` are revoked from the application role. `DELETE` stays granted so the retention job can purge events older than `AUDIT_RETENTION_DAYS`; the trigger only lets those rows go. Events are written after the action with one retry (most actions run on the target database, so one transaction is not possible); privileged scripts are audited where they are recorded in history, so none is missed.
+> - `/metrics` is outside `/api` (scraped from the API origin, not through Vercel) and returns 404 unless `METRICS_TOKEN` is set. The error hook is a tracing layer posting ERROR events with their request id to `ERROR_WEBHOOK_URL`.
 
 | Feature | Status | Notes |
 | --- | --- | --- |

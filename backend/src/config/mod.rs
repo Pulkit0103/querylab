@@ -95,6 +95,72 @@ pub struct Config {
     pub import_memory_budget: usize,
     /// Allow mock data on connections marked as production (never by default).
     pub mock_data_allow_production: bool,
+    /// Public URL of the web app, used in links sent by email.
+    pub app_base_url: String,
+    pub email: EmailConfig,
+    /// Bearer token for `GET /metrics`; the endpoint is disabled without one.
+    pub metrics_token: Option<String>,
+    /// ERROR-level events are posted here as JSON (rate limited).
+    pub error_webhook_url: Option<String>,
+    /// Audit events older than this are purged; 0 keeps them forever.
+    pub audit_retention_days: u32,
+}
+
+/// How emails (password resets, invitations) are delivered.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum EmailConfig {
+    /// Not configured: features that need email are unavailable.
+    Disabled,
+    /// Development only: messages are written to the log.
+    Log,
+    Resend {
+        api_key: String,
+        from: String,
+    },
+}
+
+impl EmailConfig {
+    pub fn is_enabled(&self) -> bool {
+        !matches!(self, EmailConfig::Disabled)
+    }
+}
+
+fn load_email(environment: &Environment) -> Result<EmailConfig, ConfigError> {
+    let provider = env::var("EMAIL_PROVIDER").unwrap_or_default();
+    match provider.trim() {
+        "" if environment.is_production() => Ok(EmailConfig::Disabled),
+        "" | "log" if !environment.is_production() => Ok(EmailConfig::Log),
+        "none" | "disabled" => Ok(EmailConfig::Disabled),
+        "log" => Err(ConfigError::Invalid {
+            name: "EMAIL_PROVIDER",
+            reason: "`log` writes reset links to the logs and is refused in production".into(),
+        }),
+        "resend" => {
+            let api_key = env::var("RESEND_API_KEY")
+                .ok()
+                .filter(|k| !k.trim().is_empty())
+                .ok_or(ConfigError::Missing("RESEND_API_KEY"))?;
+            let from = env::var("EMAIL_FROM")
+                .ok()
+                .filter(|f| !f.trim().is_empty())
+                .ok_or(ConfigError::Missing("EMAIL_FROM"))?;
+            Ok(EmailConfig::Resend {
+                api_key: api_key.trim().to_string(),
+                from: from.trim().to_string(),
+            })
+        }
+        other => Err(ConfigError::Invalid {
+            name: "EMAIL_PROVIDER",
+            reason: format!("unknown provider `{other}` (use resend, log or none)"),
+        }),
+    }
+}
+
+fn optional(name: &str) -> Option<String> {
+    env::var(name)
+        .ok()
+        .map(|v| v.trim().to_string())
+        .filter(|v| !v.is_empty())
 }
 
 impl Config {
@@ -142,6 +208,14 @@ impl Config {
             Duration::from_secs(parse_or("QUERY_TIMEOUT_SECS", 30)?).min(query_max_timeout);
         let query_max_rows: usize = parse_or("QUERY_MAX_ROWS", 10_000)?;
         let allow_private_networks: bool = parse_or("ALLOW_PRIVATE_NETWORKS", false)?;
+        let email = load_email(&environment)?;
+        let metrics_token = optional("METRICS_TOKEN");
+        if metrics_token.as_ref().is_some_and(|t| t.len() < 16) {
+            return Err(ConfigError::Invalid {
+                name: "METRICS_TOKEN",
+                reason: "must be at least 16 characters".into(),
+            });
+        }
         let import_max_bytes: usize = parse_or("IMPORT_MAX_BYTES", 50 * 1024 * 1024)?;
         if import_max_bytes == 0 {
             return Err(ConfigError::Invalid {
@@ -206,6 +280,14 @@ impl Config {
             import_memory_budget: parse_or("IMPORT_MEMORY_BUDGET_BYTES", 3 * import_max_bytes)?
                 .max(import_max_bytes),
             mock_data_allow_production: parse_or("MOCK_DATA_ALLOW_PRODUCTION", false)?,
+            app_base_url: optional("APP_BASE_URL")
+                .unwrap_or_else(|| "http://localhost:3000".into())
+                .trim_end_matches('/')
+                .to_string(),
+            email,
+            metrics_token,
+            error_webhook_url: optional("ERROR_WEBHOOK_URL"),
+            audit_retention_days: parse_or("AUDIT_RETENTION_DAYS", 365)?,
         })
     }
 
@@ -247,6 +329,11 @@ impl Config {
             import_max_bytes: 50 * 1024 * 1024,
             import_memory_budget: 150 * 1024 * 1024,
             mock_data_allow_production: false,
+            app_base_url: "http://localhost:3000".into(),
+            email: EmailConfig::Log,
+            metrics_token: None,
+            error_webhook_url: None,
+            audit_retention_days: 365,
         }
     }
 }

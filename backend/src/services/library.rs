@@ -18,6 +18,7 @@ use crate::{
         },
         query::QueryResult,
     },
+    services::audit::{self, AuditEvent},
     state::AppState,
 };
 
@@ -203,7 +204,7 @@ impl<'a> LibraryService<'a> {
         } else {
             HistoryStatus::Success
         };
-        repo::insert_history(
+        let id = repo::insert_history(
             &self.state.db,
             &NewHistory {
                 user_id,
@@ -218,7 +219,30 @@ impl<'a> LibraryService<'a> {
         )
         .await
         .map_err(|e| tracing::warn!(error = %e, "failed to record history"))
-        .ok()
+        .ok();
+        // Every privileged script is also an audit event.
+        let action = match kind {
+            HistoryKind::DataApply => "data.applied",
+            HistoryKind::Migration => "migration.run",
+            HistoryKind::Import => "import.run",
+            HistoryKind::MockData => "mock_data.run",
+            HistoryKind::Admin => "session.signalled",
+            HistoryKind::Query => "query.script",
+        };
+        audit::record(
+            &self.state.db,
+            AuditEvent::new(Some(user_id), action)
+                .connection(connection_id)
+                .detail(serde_json::json!({
+                    "status": status.as_str(),
+                    "rows": row_count,
+                    "duration_ms": execution_time_ms,
+                    "error": error_message,
+                }))
+                .sql(sql),
+        )
+        .await;
+        id
     }
 
     pub async fn history(&self, user_id: Uuid, q: &HistoryQuery) -> AppResult<HistoryPage> {

@@ -396,7 +396,9 @@ impl<'a> MockDataService<'a> {
         }
         let state = self.state.clone();
         let user_id = user.user_id;
-        tokio::spawn(async move { run_job(state, job, conn, plan, user_id).await });
+        crate::services::audit::spawn_in_request(async move {
+            run_job(state, job, conn, plan, user_id).await
+        });
         Ok(view)
     }
 }

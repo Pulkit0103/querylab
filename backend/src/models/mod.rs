@@ -1,5 +1,6 @@
 //! Domain models, database records and API DTOs.
 
+pub mod audit;
 pub mod auth;
 pub mod connection;
 pub mod data;

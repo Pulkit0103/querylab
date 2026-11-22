@@ -3,6 +3,10 @@
 //! Sessions are opaque 256-bit random tokens. Only their SHA-256 digest is
 //! stored, so a database leak does not reveal usable tokens. Expiry slides on
 //! activity but is capped by an absolute lifetime.
+//!
+//! Accounts with two-factor authentication sign in in two steps: a correct
+//! password yields a short-lived challenge (also a random token stored as a
+//! hash), which a TOTP or recovery code turns into a session.
 
 use std::sync::OnceLock;
 
@@ -12,24 +16,31 @@ use argon2::{
 };
 use base64::{engine::general_purpose::URL_SAFE_NO_PAD, Engine};
 use chrono::{DateTime, Duration as ChronoDuration, Utc};
+use serde_json::json;
 use sha2::{Digest, Sha256};
-use sqlx::PgPool;
 use uuid::Uuid;
 use zeroize::Zeroizing;
 
 use crate::{
-    config::Config,
-    database::{sessions, users},
+    database::{account, sessions, users},
     errors::{AppError, AppResult},
     models::{
         auth::{LoginRequest, RegisterRequest},
         user::UserResponse,
+    },
+    services::{
+        account::verify_second_factor,
+        audit::{self, AuditEvent},
     },
     state::AppState,
 };
 
 /// Refresh `last_seen_at`/expiry at most this often per session.
 const TOUCH_INTERVAL_SECS: i64 = 300;
+/// Time to enter the second factor after a correct password.
+const CHALLENGE_TTL_MINUTES: i64 = 5;
+/// Codes accepted per challenge before it is spent.
+pub const CHALLENGE_ATTEMPTS: i32 = 5;
 
 #[derive(Debug, Clone)]
 pub struct AuthUser {
@@ -44,6 +55,15 @@ pub struct IssuedSession {
     pub expires_at: DateTime<Utc>,
 }
 
+/// Result of a password check.
+pub enum LoginOutcome {
+    Session(UserResponse, IssuedSession),
+    /// The account has 2FA: finish with `POST /auth/login/2fa`.
+    TwoFactor {
+        challenge: Zeroizing<String>,
+    },
+}
+
 pub fn generate_token() -> Zeroizing<String> {
     use argon2::password_hash::rand_core::RngCore;
     let mut bytes = Zeroizing::new([0u8; 32]);
@@ -55,7 +75,7 @@ pub fn hash_token(token: &str) -> [u8; 32] {
     Sha256::digest(token.as_bytes()).into()
 }
 
-async fn hash_password(password: Zeroizing<String>) -> AppResult<String> {
+pub(crate) async fn hash_password(password: Zeroizing<String>) -> AppResult<String> {
     tokio::task::spawn_blocking(move || {
         let salt = SaltString::generate(&mut OsRng);
         Argon2::default()
@@ -67,7 +87,7 @@ async fn hash_password(password: Zeroizing<String>) -> AppResult<String> {
     .map_err(|e| AppError::internal(format!("hashing task failed: {e}")))?
 }
 
-async fn verify_password(password: Zeroizing<String>, hash: String) -> AppResult<bool> {
+pub(crate) async fn verify_password(password: Zeroizing<String>, hash: String) -> AppResult<bool> {
     tokio::task::spawn_blocking(move || {
         let parsed = PasswordHash::new(&hash)
             .map_err(|e| AppError::internal(format!("stored password hash is invalid: {e}")))?;
@@ -81,7 +101,7 @@ async fn verify_password(password: Zeroizing<String>, hash: String) -> AppResult
 
 /// Hash verified when the email is unknown, so response time does not reveal
 /// whether an account exists.
-fn dummy_hash() -> &'static str {
+pub(crate) fn dummy_hash() -> &'static str {
     static DUMMY: OnceLock<String> = OnceLock::new();
     DUMMY.get_or_init(|| {
         let salt = SaltString::generate(&mut OsRng);
@@ -93,19 +113,15 @@ fn dummy_hash() -> &'static str {
 }
 
 pub struct AuthService<'a> {
-    db: &'a PgPool,
-    config: &'a Config,
+    state: &'a AppState,
 }
 
 impl<'a> AuthService<'a> {
     pub fn new(state: &'a AppState) -> Self {
-        Self {
-            db: &state.db,
-            config: &state.config,
-        }
+        Self { state }
     }
 
-    async fn issue_session(
+    pub(crate) async fn issue_session(
         &self,
         user_id: Uuid,
         user_agent: Option<&str>,
@@ -113,24 +129,26 @@ impl<'a> AuthService<'a> {
         let token = generate_token();
         let expires_at = Utc::now() + self.ttl();
         let ua = user_agent.map(|s| s.chars().take(255).collect::<String>());
+        let ip = audit::current().ip;
         sessions::insert(
-            self.db,
+            &self.state.db,
             Uuid::new_v4(),
             user_id,
             &hash_token(&token),
             expires_at,
             ua.as_deref(),
+            ip.as_deref(),
         )
         .await?;
         Ok(IssuedSession { token, expires_at })
     }
 
     fn ttl(&self) -> ChronoDuration {
-        ChronoDuration::from_std(self.config.session_ttl).unwrap_or(ChronoDuration::days(7))
+        ChronoDuration::from_std(self.state.config.session_ttl).unwrap_or(ChronoDuration::days(7))
     }
 
     fn absolute_max(&self) -> ChronoDuration {
-        ChronoDuration::from_std(self.config.session_absolute_max)
+        ChronoDuration::from_std(self.state.config.session_absolute_max)
             .unwrap_or(ChronoDuration::days(30))
     }
 
@@ -148,7 +166,7 @@ impl<'a> AuthService<'a> {
             .map(str::to_string);
         let hash = hash_password(req.password).await?;
         let user = users::insert(
-            self.db,
+            &self.state.db,
             Uuid::new_v4(),
             &email,
             &hash,
@@ -162,6 +180,11 @@ impl<'a> AuthService<'a> {
             other => other,
         })?;
         tracing::info!(user_id = %user.id, "user registered");
+        audit::record(
+            &self.state.db,
+            AuditEvent::new(Some(user.id), "auth.registered"),
+        )
+        .await;
         let session = self.issue_session(user.id, user_agent).await?;
         Ok((UserResponse::from(&user), session))
     }
@@ -170,24 +193,90 @@ impl<'a> AuthService<'a> {
         &self,
         req: LoginRequest,
         user_agent: Option<&str>,
-    ) -> AppResult<(UserResponse, IssuedSession)> {
-        let user = users::find_by_email(self.db, req.email.trim()).await?;
+    ) -> AppResult<LoginOutcome> {
+        let db = &self.state.db;
+        let user = users::find_by_email(db, req.email.trim()).await?;
         let Some(user) = user else {
             // Equalise timing with the "wrong password" path.
             let _ = verify_password(req.password, dummy_hash().to_string()).await;
+            audit::record(
+                db,
+                AuditEvent::new(None, "auth.login_failed")
+                    .detail(json!({ "email": req.email.trim().to_lowercase(), "reason": "unknown account" })),
+            )
+            .await;
             return Err(AppError::InvalidCredentials);
         };
         if !verify_password(req.password, user.password_hash.clone()).await? {
             tracing::info!(user_id = %user.id, "failed login");
+            audit::record(
+                db,
+                AuditEvent::new(Some(user.id), "auth.login_failed")
+                    .detail(json!({ "reason": "wrong password" })),
+            )
+            .await;
             return Err(AppError::InvalidCredentials);
+        }
+        if user.totp_enabled_at.is_some() {
+            let challenge = generate_token();
+            let ua = user_agent.map(|s| s.chars().take(255).collect::<String>());
+            account::insert_challenge(
+                db,
+                user.id,
+                &hash_token(&challenge),
+                Utc::now() + ChronoDuration::minutes(CHALLENGE_TTL_MINUTES),
+                ua.as_deref(),
+            )
+            .await?;
+            return Ok(LoginOutcome::TwoFactor { challenge });
         }
         let session = self.issue_session(user.id, user_agent).await?;
         tracing::info!(user_id = %user.id, "user logged in");
+        audit::record(db, AuditEvent::new(Some(user.id), "auth.login")).await;
+        Ok(LoginOutcome::Session(UserResponse::from(&user), session))
+    }
+
+    /// Second sign-in step: a TOTP or recovery code for a live challenge.
+    pub async fn login_second_factor(
+        &self,
+        challenge: &str,
+        code: &str,
+        user_agent: Option<&str>,
+    ) -> AppResult<(UserResponse, IssuedSession)> {
+        let db = &self.state.db;
+        let hash = hash_token(challenge);
+        let user_id = account::attempt_challenge(db, &hash, CHALLENGE_ATTEMPTS)
+            .await?
+            .ok_or(AppError::Unauthorized)?;
+        if !verify_second_factor(self.state, user_id, code).await? {
+            audit::record(
+                db,
+                AuditEvent::new(Some(user_id), "auth.login_failed")
+                    .detail(json!({ "reason": "wrong second factor" })),
+            )
+            .await;
+            return Err(AppError::validation("code", "the code is not valid"));
+        }
+        account::delete_challenge(db, &hash).await?;
+        let user = users::find_by_id(db, user_id)
+            .await?
+            .ok_or(AppError::Unauthorized)?;
+        let session = self.issue_session(user.id, user_agent).await?;
+        audit::record(
+            db,
+            AuditEvent::new(Some(user.id), "auth.login").detail(json!({ "two_factor": true })),
+        )
+        .await;
         Ok((UserResponse::from(&user), session))
     }
 
-    pub async fn logout(&self, session_id: Uuid) -> AppResult<()> {
-        sessions::delete(self.db, session_id).await?;
+    pub async fn logout(&self, user: &AuthUser) -> AppResult<()> {
+        sessions::delete(&self.state.db, user.session_id).await?;
+        audit::record(
+            &self.state.db,
+            AuditEvent::new(Some(user.user_id), "auth.logout"),
+        )
+        .await;
         Ok(())
     }
 
@@ -197,7 +286,7 @@ impl<'a> AuthService<'a> {
         if token.is_empty() || token.len() > 128 {
             return Ok(None);
         }
-        let Some(session) = sessions::find_active(self.db, &hash_token(token)).await? else {
+        let Some(session) = sessions::find_active(&self.state.db, &hash_token(token)).await? else {
             return Ok(None);
         };
 
@@ -205,7 +294,7 @@ impl<'a> AuthService<'a> {
         if (now - session.last_seen_at).num_seconds() >= TOUCH_INTERVAL_SECS {
             let hard_limit = session.created_at + self.absolute_max();
             let expires_at = (now + self.ttl()).min(hard_limit);
-            sessions::extend(self.db, session.session_id, expires_at).await?;
+            sessions::extend(&self.state.db, session.session_id, expires_at).await?;
         }
 
         Ok(Some(AuthUser {
@@ -217,8 +306,8 @@ impl<'a> AuthService<'a> {
     }
 }
 
-/// Removes expired sessions periodically.
-pub fn spawn_session_cleanup(db: PgPool) {
+/// Removes expired sessions, challenges and reset links periodically.
+pub fn spawn_session_cleanup(db: sqlx::PgPool) {
     tokio::spawn(async move {
         let mut interval = tokio::time::interval(std::time::Duration::from_secs(3600));
         loop {
@@ -227,6 +316,9 @@ pub fn spawn_session_cleanup(db: PgPool) {
                 Ok(n) if n > 0 => tracing::info!(removed = n, "expired sessions removed"),
                 Ok(_) => {}
                 Err(e) => tracing::warn!(error = %e, "session cleanup failed"),
+            }
+            if let Err(e) = account::delete_expired(&db).await {
+                tracing::warn!(error = %e, "challenge cleanup failed");
             }
         }
     });

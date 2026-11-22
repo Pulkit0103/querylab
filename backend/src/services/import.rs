@@ -697,7 +697,7 @@ impl<'a> ImportService<'a> {
         }
         let state = self.state.clone();
         let user_id = user.user_id;
-        tokio::spawn(async move {
+        crate::services::audit::spawn_in_request(async move {
             run_import(state, job, conn, plan, layout, data, file_name, user_id).await;
         });
         Ok(view)

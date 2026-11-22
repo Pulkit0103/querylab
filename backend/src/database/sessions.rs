@@ -21,15 +21,17 @@ pub async fn insert(
     token_hash: &[u8],
     expires_at: DateTime<Utc>,
     user_agent: Option<&str>,
+    ip: Option<&str>,
 ) -> Result<(), sqlx::Error> {
     sqlx::query(
-        "INSERT INTO sessions (id, user_id, token_hash, expires_at, user_agent) VALUES ($1, $2, $3, $4, $5)",
+        "INSERT INTO sessions (id, user_id, token_hash, expires_at, user_agent, ip) VALUES ($1, $2, $3, $4, $5, $6)",
     )
     .bind(id)
     .bind(user_id)
     .bind(token_hash)
     .bind(expires_at)
     .bind(user_agent)
+    .bind(ip)
     .execute(db)
     .await?;
     Ok(())

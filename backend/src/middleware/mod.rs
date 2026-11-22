@@ -3,5 +3,6 @@
 pub mod auth;
 pub mod client_ip;
 pub mod csrf;
+pub mod metrics;
 pub mod observability;
 pub mod rate_limit;

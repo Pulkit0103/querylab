@@ -1,7 +1,7 @@
 /** Session cookie names set by the API (secure deployments use `__Host-`). */
 export const SESSION_COOKIES = ["__Host-ql_session", "ql_session"] as const;
 
-export const PUBLIC_PATHS = ["/login", "/register"] as const;
+export const PUBLIC_PATHS = ["/login", "/register", "/forgot-password", "/reset-password"] as const;
 
 /**
  * Returns a safe in-app redirect target. Only same-origin absolute paths are

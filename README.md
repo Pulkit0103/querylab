@@ -146,6 +146,30 @@ The frontend's `proxy.ts` redirects visitors without a session cookie to
 `/login`; the API remains the authority and a `401` anywhere sends the user
 back to sign in.
 
+**Account security** (Settings → Account security):
+
+- **Password change** checks the current password and signs out every other
+  session.
+- **Sessions** lists the browsers signed in (device, address, last activity);
+  any of them, or all others, can be signed out.
+- **Two-factor authentication** (TOTP, RFC 6238, compatible with common
+  authenticator apps):
+  - Enrolment shows a QR code and the key. 2FA turns on once a code from it
+    is verified, and ten one-time recovery codes are shown once.
+  - The secret is encrypted like connection credentials (AES-256-GCM, bound
+    to the user id). A used time step cannot be replayed.
+  - A correct password then yields a five-minute challenge instead of a
+    session; five wrong codes spend it.
+  - Turning 2FA off needs the password and a code.
+- **Password reset by email:**
+  - Single-use links valid for one hour. A new request invalidates older
+    links, and at most three are sent per hour.
+  - The response is the same whether or not the account exists.
+  - A reset signs out every session.
+  - Email goes through a provider abstraction: Resend (`EMAIL_PROVIDER=resend`)
+    in production, the log in development. Without a provider the feature is
+    off and the login page hides the link.
+
 ## Connecting to user databases
 
 Each operation against a user's database opens a **dedicated, short-lived
@@ -574,6 +598,28 @@ and lists past jobs.
   - Target databases are never pooled. Each execution opens and closes its
     own connection, so sessions and credentials of different users cannot
     mix.
+- **Audit log** (`/audit`, `audit_events`):
+  - Records sign-ins (including failures), account changes, connection
+    changes, every executed statement and EXPLAIN ANALYZE, and every
+    privileged action: Data Studio applies, imports, mock data, exports,
+    migrations, and cancelling or terminating database sessions.
+  - Each event has the actor, the client address and the request id.
+    Executed SQL is truncated to 10 KB; bound parameters are never stored.
+  - The table is append-only: a trigger rejects updates and deletes (and
+    `TRUNCATE`), and the application role has no `UPDATE` or `TRUNCATE`
+    privilege. Only events older than `AUDIT_RETENTION_DAYS` (365 by
+    default) can be purged, by the daily retention job.
+  - The page filters by action, connection and date, and exports CSV.
+- **Metrics:** `GET /metrics` serves Prometheus text when `METRICS_TOKEN` is
+  set; scrapers send it as a bearer token. Without the token setting it
+  returns 404. It includes:
+  - request counts by method and status class, and a latency histogram;
+  - running executions, active data jobs and reserved upload memory;
+  - metadata pool size, uptime and build info.
+- **Error tracking:** with `ERROR_WEBHOOK_URL` set, every ERROR-level event
+  (5xx responses, panics, failed background work) is posted as JSON with
+  its request id, at most 30 per minute. The payload includes a `text`
+  field, so Slack incoming webhooks work as is.
 - **Tests:**
   - `backend/tests/security_api.rs` covers forged and tampered tokens,
     session independence, racing registrations, payload validation, and
@@ -616,6 +662,12 @@ and lists past jobs.
 | `IMPORT_MAX_BYTES`         | `52428800` (50 MiB)      | Largest file an import accepts |
 | `IMPORT_MEMORY_BUDGET_BYTES` | 3 × `IMPORT_MAX_BYTES` | Upload bytes held in memory across all imports |
 | `MOCK_DATA_ALLOW_PRODUCTION` | `false`                | Allow mock data on production connections |
+| `APP_BASE_URL`             | `http://localhost:3000`  | Public web app URL used in emailed links |
+| `EMAIL_PROVIDER`           | `log` (dev), off (prod)  | `resend`, `log` (development only) or `none` |
+| `RESEND_API_KEY` / `EMAIL_FROM` | —                   | Required with `EMAIL_PROVIDER=resend` |
+| `METRICS_TOKEN`            | —                        | Enables `GET /metrics` for this bearer token (16+ characters) |
+| `ERROR_WEBHOOK_URL`        | —                        | ERROR events are posted here as JSON |
+| `AUDIT_RETENTION_DAYS`     | `365`                    | Audit events older than this are purged (`0` keeps them) |
 
 ## API
 
@@ -628,6 +680,22 @@ and lists past jobs.
 | POST   | `/api/auth/login`    | Start a session                              |
 | POST   | `/api/auth/logout`   | Revoke the current session                   |
 | GET    | `/api/auth/me`       | Current user                                 |
+| GET    | `/api/auth/options`  | Optional features (`password_reset`)         |
+| POST   | `/api/auth/login/2fa` | `{challenge, code}` → session (accounts with 2FA) |
+| GET    | `/api/auth/security` | 2FA status and recovery codes left           |
+| POST   | `/api/auth/password` | `{current_password, new_password}`; signs out other sessions |
+| GET/DELETE | `/api/auth/sessions` | List sessions / sign out all others      |
+| DELETE | `/api/auth/sessions/{id}` | Sign out one session                    |
+| POST   | `/api/auth/2fa/enroll` | New secret, `otpauth://` URI and QR SVG    |
+| POST   | `/api/auth/2fa/verify` | `{code}` → turns 2FA on, returns recovery codes |
+| POST   | `/api/auth/2fa/recovery-codes` | `{code}` → new recovery codes      |
+| POST   | `/api/auth/2fa/disable` | `{password, code}`                        |
+| POST   | `/api/auth/password-reset` | `{email}` → `202` (emails a link if the account exists) |
+| GET    | `/api/auth/password-reset?token=` | Whether a reset link is valid    |
+| POST   | `/api/auth/password-reset/confirm` | `{token, new_password}`; signs out every session |
+| GET    | `/api/audit-events?action=&actor=&connection_id=&from=&to=&before=&limit=` | Audit events (keyset paginated; `action` ending in `.` matches a prefix) |
+| GET    | `/api/audit-events/export?…` | Same filters as CSV (up to 50,000 rows) |
+| GET    | `/metrics`           | Prometheus metrics (`Authorization: Bearer $METRICS_TOKEN`) |
 | GET    | `/api/connections`        | List the user's connections (no secrets) |
 | POST   | `/api/connections`        | Create a connection (password encrypted) |
 | GET    | `/api/connections/{id}`   | Get a connection                         |

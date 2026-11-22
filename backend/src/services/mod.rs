@@ -3,6 +3,9 @@
 //!
 //! [`AppState`]: crate::state::AppState
 
+pub mod account;
+pub mod audit;
+pub mod audit_log;
 pub mod auth;
 pub mod connections;
 pub mod data_jobs;
@@ -14,6 +17,7 @@ pub mod export;
 pub mod import;
 pub mod import_parse;
 pub mod library;
+pub mod mailer;
 pub mod migrations;
 pub mod mock_data;
 pub mod mock_gen;

@@ -25,6 +25,12 @@ async fn protected_routes_require_authentication() {
             "/api/connections/00000000-0000-0000-0000-000000000000",
         ),
         ("GET", "/api/data-jobs"),
+        ("GET", "/api/auth/sessions"),
+        ("GET", "/api/auth/security"),
+        ("POST", "/api/auth/password"),
+        ("POST", "/api/auth/2fa/enroll"),
+        ("GET", "/api/audit-events"),
+        ("GET", "/api/audit-events/export"),
         ("GET", "/api/imports/00000000-0000-0000-0000-000000000000"),
         (
             "PUT",
