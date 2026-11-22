@@ -720,26 +720,36 @@ CREATE TABLE saved_plans (id uuid PRIMARY KEY, user_id uuid NOT NULL REFERENCES 
 
 ## Phase 8 — Schema Diff & Migration Manager
 
-**Goal:** support real database development workflows. **Status:** ☐ new.
+**Goal:** support real database development workflows. **Status:** ✅ delivered.
 **Depends on:** Phases 2 and 3.
+
+> **Implementation notes:**
+> - A diff compares one schema on each side (`{source:{connection_id, schema}, target:{…}}`), which also lets two schemas of the same database be compared. Same-schema qualifiers are removed from deparsed definitions because PostgreSQL qualifies names that are not visible on `search_path` (always for index and trigger tables, and for everything when the role lacks USAGE on the schema).
+> - Functions come first among creates, then views, then triggers; the script turns off `check_function_bodies`. View changes use `CREATE OR REPLACE VIEW`; materialized views are dropped and recreated.
+> - Only constraint/index/view/function/trigger drops are treated as reversible (their target definition is the undo); drops of tables, columns, types and sequences and narrowing type changes are destructive and unselected by default. Enum values can only be added; removed or reordered values and domain changes are reported as manual work.
+> - `CREATE INDEX CONCURRENTLY` is not offered: every migration runs in one transaction so it applies completely or not at all.
+> - Checksums are SHA-256 hex of the up script. The advisory lock uses `pg_try_advisory_xact_lock`, so a second apply fails immediately with 409 rather than waiting.
+> - Apply supports a dry run (run and roll back). Migrations run in version order; only the latest applied version can be rolled back.
+> - Projects cannot be renamed (the name keys the tracking table). Deleting a project leaves databases' tracking rows in place.
+> - Not compared yet: comments, grants, ownership, column collations, partitions of partitioned tables, extensions.
 
 **Schema comparison**
 
 | Feature | Notes |
 | --- | --- |
-| Compare two databases, e.g. development vs staging | Source and target connections, plus schema filters |
-| Detect missing tables, column changes, missing indexes, constraint differences | Also functions, triggers, views, enums and sequences |
-| Generate migration SQL | Ordered by dependency; destructive statements flagged |
+| Compare two databases, e.g. development vs staging | ✅ Source and target connections, one schema each |
+| Detect missing tables, column changes, missing indexes, constraint differences | ✅ Also functions, triggers, views, enums and sequences |
+| Generate migration SQL | ✅ Ordered by dependency; destructive statements flagged |
 
 **Migration management**
 
 | Feature | Notes |
 | --- | --- |
-| Create migration scripts | Written by hand, or generated from a diff |
-| Track versions and applied migrations | Per target connection |
-| Migration history | Who applied which migration, when, duration and outcome |
-| Rollback scripts where feasible | Generated inverses for additive changes; destructive changes need a hand-written down script |
-| Apply with explicit confirmation | Environment guardrails apply; production requires typed confirmation |
+| Create migration scripts | ✅ Written by hand, or generated from a diff |
+| Track versions and applied migrations | ✅ Per target connection |
+| Migration history | ✅ Who applied which migration, when, duration and outcome |
+| Rollback scripts where feasible | ✅ Generated inverses for additive changes; destructive changes need a hand-written down script |
+| Apply with explicit confirmation | ✅ Environment guardrails apply; production requires typed confirmation |
 
 **Design**
 - **Diff engine:**

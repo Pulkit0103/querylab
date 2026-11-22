@@ -317,6 +317,14 @@ async fn other_users_cannot_touch_any_connection_endpoint(pool: PgPool) {
         ("GET", format!("/api/connections/{id}/monitor/sizes"), None),
         (
             "POST",
+            "/api/schema-diff".into(),
+            Some(json!({
+                "source": { "connection_id": id, "schema": "public" },
+                "target": { "connection_id": id, "schema": "sales" },
+            })),
+        ),
+        (
+            "POST",
             format!("/api/connections/{id}/monitor/backends/1/terminate"),
             Some(json!({})),
         ),

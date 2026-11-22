@@ -5,6 +5,7 @@
 pub mod connections;
 pub mod diagrams;
 pub mod library;
+pub mod migrations;
 pub mod performance;
 pub mod sessions;
 pub mod users;

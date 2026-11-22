@@ -28,8 +28,8 @@ const MAX_BODY_BYTES: usize = 2 * 1024 * 1024;
 
 pub fn build_router(state: AppState) -> Router {
     use handlers::{
-        auth, connections, data, diagrams, library, monitoring, performance, query, schema,
-        workspace,
+        auth, connections, data, diagrams, library, migrations, monitoring, performance, query,
+        schema, workspace,
     };
 
     let api = Router::new()
@@ -159,6 +159,30 @@ pub fn build_router(state: AppState) -> Router {
             axum::routing::put(library::update_collection).delete(library::delete_collection),
         )
         .route("/stats", get(library::stats))
+        // Schema diff and migrations
+        .route("/schema-diff", post(migrations::schema_diff))
+        .route(
+            "/migration-projects",
+            get(migrations::list_projects).post(migrations::create_project),
+        )
+        .route(
+            "/migration-projects/{id}",
+            axum::routing::delete(migrations::delete_project),
+        )
+        .route(
+            "/migration-projects/{id}/migrations",
+            get(migrations::list_migrations).post(migrations::create_migration),
+        )
+        .route("/migration-projects/{id}/status", get(migrations::status))
+        .route(
+            "/migrations/{id}",
+            get(migrations::get_migration)
+                .put(migrations::update_migration)
+                .delete(migrations::delete_migration),
+        )
+        .route("/migrations/{id}/apply", post(migrations::apply))
+        .route("/migrations/{id}/rollback", post(migrations::rollback))
+        .route("/migration-runs", get(migrations::runs))
         // Performance
         .route("/performance/fingerprints", get(performance::fingerprints))
         .route(
