@@ -329,6 +329,26 @@ async fn other_users_cannot_touch_any_connection_endpoint(pool: PgPool) {
             Some(json!({})),
         ),
         (
+            "POST",
+            format!("/api/connections/{id}/imports"),
+            Some(json!({ "file_name": "x.csv", "size": 10 })),
+        ),
+        (
+            "POST",
+            format!("/api/connections/{id}/exports"),
+            Some(json!({ "format": "csv", "source": { "type": "query", "sql": "select 1" } })),
+        ),
+        (
+            "POST",
+            format!("/api/connections/{id}/mock-data/preview"),
+            Some(json!({ "tables": [{ "schema": "public", "table": "departments", "rows": 1 }] })),
+        ),
+        (
+            "POST",
+            format!("/api/connections/{id}/mock-data/run"),
+            Some(json!({ "tables": [{ "schema": "public", "table": "departments", "rows": 1 }] })),
+        ),
+        (
             "PUT",
             format!("/api/connections/{id}/diagram-layouts/public"),
             Some(json!({ "positions": {} })),

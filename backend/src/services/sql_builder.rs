@@ -1139,7 +1139,7 @@ pub fn json_cell(value: Option<&str>, col: &Column) -> Value {
 }
 
 /// `INSERT INTO ... VALUES (...);` for one exported row.
-pub fn sql_insert_line(table: &Table, columns: &[&Column], values: &[Option<String>]) -> String {
+pub fn sql_insert_line(target: &str, columns: &[&Column], values: &[Option<String>]) -> String {
     let names: Vec<String> = columns.iter().map(|c| c.ident()).collect();
     let literals: Vec<String> = columns
         .iter()
@@ -1152,8 +1152,7 @@ pub fn sql_insert_line(table: &Table, columns: &[&Column], values: &[Option<Stri
         ""
     };
     format!(
-        "INSERT INTO {} ({}){overriding} VALUES ({});\n",
-        table.qualified(),
+        "INSERT INTO {target} ({}){overriding} VALUES ({});\n",
         names.join(", "),
         literals.join(", ")
     )
@@ -1753,7 +1752,7 @@ mod tests {
 
         let cols = [&t.columns[0], &t.columns[1], &t.columns[2]];
         assert_eq!(
-            sql_insert_line(&t, &cols, &[Some("1".into()), Some("O'Neil \\".into()), None]),
+            sql_insert_line(&t.qualified(), &cols, &[Some("1".into()), Some("O'Neil \\".into()), None]),
             "INSERT INTO public.people (id, name, age) OVERRIDING SYSTEM VALUE VALUES (1, E'O''Neil \\\\', NULL);\n"
         );
     }

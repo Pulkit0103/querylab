@@ -66,7 +66,7 @@ export function useQueryRunner() {
           { connection_id: connectionId, query: sql, max_rows: maxRows, execution_id: entry.executionId },
           { signal: entry.controller.signal },
         );
-        s.finishExec(tabId, result);
+        s.finishExec(tabId, result, { sql, connectionId });
         const what =
           result.columns.length === 0 && result.rows_affected !== null
             ? `${formatNumber(result.rows_affected)} rows affected`

@@ -1,5 +1,6 @@
 import {
   Activity,
+  ArrowDownUp,
   Bookmark,
   Database,
   FolderGit2,
@@ -30,6 +31,7 @@ export const navItems: NavItem[] = [
   { href: "/analyzer", label: "Analyzer", icon: Gauge },
   { href: "/schema-diff", label: "Schema Diff", icon: GitCompareArrows },
   { href: "/migrations", label: "Migrations", icon: FolderGit2 },
+  { href: "/data", label: "Import / Export", icon: ArrowDownUp },
   { href: "/saved", label: "Saved Queries", icon: Bookmark },
   { href: "/history", label: "Query History", icon: History },
   { href: "/settings", label: "Settings", icon: Settings },

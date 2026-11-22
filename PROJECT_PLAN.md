@@ -845,8 +845,14 @@ CREATE TABLE migration_runs (id uuid PRIMARY KEY, migration_id uuid NOT NULL REF
 ## Phase 9 — Import, Export & Mock Data
 
 **Goal:** make QueryLab useful for testing and data management.
-**Status:** ◐. Results export to CSV and copy as TSV exist; everything
-else is new. **Depends on:** Phases 3 and 4.
+**Status:** ✅ delivered. **Depends on:** Phases 3 and 4.
+
+> **Implementation notes:**
+> - Uploads are chunked instead of multipart: `POST /connections/{id}/imports` declares the size (reserved against `IMPORT_MEMORY_BUDGET_BYTES`), then `PUT /imports/{id}/data?offset=` sends 4 MiB chunks, so no proxy body limit applies and uploads can resume. `POST /imports/{id}/analyze` and `/check` split the preview from the mapping check. The file lives in memory only while the import exists (30 minutes idle at most).
+> - Per-row errors come from two passes: `pg_input_is_valid`/`pg_input_error_info` over the staging table (PostgreSQL 16+) for type and NOT NULL errors, then batched merges under savepoints that are bisected on failure for constraint errors. On older servers the bisection alone reports every error.
+> - Dependencies added: `csv` and `rust_xlsxwriter` (constant-memory worksheets). Mock values come from a small built-in generator (SplitMix64 and word lists) instead of the proposed `fake` crate: the seed makes previews and runs identical, and no randomness crate is needed.
+> - Exports of a statement wrap it as `SELECT CAST(c1 AS text), … FROM (<sql>) AS q(c1, …)` after preparing it once to validate it; `SHOW` and other statements that cannot be wrapped are decoded instead. The Data Studio export route accepts Excel too, and the row cap rose from 100,000 to 1,000,000 (200,000 for Excel).
+> - Live progress of imports and mock data runs is in memory; every job, including exports, is recorded in `data_jobs` when it finishes. Rows still `running` when the API starts are marked failed.
 
 | Area | Feature | Notes |
 | --- | --- | --- |
@@ -1121,7 +1127,7 @@ disabled placeholders.
 | Topology | Vercel (frontend, `/api` rewrite) → Render or Railway (API container) → Neon (metadata). See `docs/DEPLOYMENT.md`. |
 | Instance count | **1** until Phase 10 moves limits and the execution registry to Redis |
 | Migrations | Embedded and applied at startup. Changes must be additive and backwards compatible within a release: new columns get defaults, and nothing is dropped in the same release. |
-| Upload sizes (Phase 9) | The Vercel rewrite has request size and duration limits. Large imports and exports go directly to the API origin over CORS (`CORS_ORIGINS`) with the CSRF header, or through signed short-lived URLs. To be decided in Phase 9 after measuring. |
+| Upload sizes (Phase 9) | Decided: imports upload in 4 MiB chunks through the normal `/api` rewrite, so request body limits do not apply. Exports stream through the rewrite; very large exports are bounded by the platform's response duration limit, which is measured after deploying. |
 | Long requests | Monitoring and diff requests are short-lived. Imports, mock data and large exports run as jobs with polling, which avoids proxy timeouts. |
 | Secrets | `ENCRYPTION_KEY` is required. Redis credentials (Phase 10) and the email provider key (invitations) are new. |
 | Observability | JSON logs with request and user ids exist. Phase 10 adds `/metrics` and an error-tracking hook. Alert on `level=ERROR` until then. |

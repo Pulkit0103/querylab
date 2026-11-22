@@ -32,6 +32,7 @@ import {
 } from "@/components/ui/dropdown-menu";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { downloadExport, useBrowse, usePreview } from "@/hooks/use-data-studio";
+import { EXPORT_FORMATS } from "@/lib/download";
 import { ApiError } from "@/lib/api-client";
 import {
   addInsert,
@@ -253,18 +254,18 @@ export function TableEditor({ connection, schema, table, onPickTable }: TableEdi
           </DropdownMenuTrigger>
           <DropdownMenuContent align="end" className="w-56">
             <DropdownMenuLabel>All matching rows</DropdownMenuLabel>
-            {(["csv", "json", "sql"] as const).map((f) => (
-              <DropdownMenuItem key={f} onClick={() => runExport(f, false)}>
-                {f === "sql" ? "SQL INSERT statements" : f.toUpperCase()}
+            {EXPORT_FORMATS.map(({ format, label }) => (
+              <DropdownMenuItem key={format} onClick={() => runExport(format, false)}>
+                {label}
               </DropdownMenuItem>
             ))}
             {selectedRows.length > 0 && (
               <>
                 <DropdownMenuSeparator />
                 <DropdownMenuLabel>{selectedRows.length} selected rows</DropdownMenuLabel>
-                {(["csv", "json", "sql"] as const).map((f) => (
-                  <DropdownMenuItem key={f} onClick={() => runExport(f, true)}>
-                    {f === "sql" ? "SQL INSERT statements" : f.toUpperCase()}
+                {EXPORT_FORMATS.map(({ format, label }) => (
+                  <DropdownMenuItem key={format} onClick={() => runExport(format, true)}>
+                    {label}
                   </DropdownMenuItem>
                 ))}
               </>

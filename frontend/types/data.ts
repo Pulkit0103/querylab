@@ -129,4 +129,4 @@ export interface ApplyResponse {
   history_id: string | null;
 }
 
-export type ExportFormat = "csv" | "json" | "sql";
+export type ExportFormat = "csv" | "json" | "sql" | "xlsx";

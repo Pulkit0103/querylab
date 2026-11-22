@@ -15,7 +15,11 @@ use crate::{
         ApplyRequest, ApplyResponse, BrowseRequest, BrowseResponse, ExportRequest, PreviewRequest,
         PreviewResponse,
     },
-    services::{auth::AuthUser, data_studio::DataStudioService},
+    services::{
+        auth::AuthUser,
+        data_studio::DataStudioService,
+        export::{ExportService, ExportStream},
+    },
     state::AppState,
     utils::validation::{ApiPath, ValidatedJson},
 };
@@ -65,9 +69,14 @@ pub async fn export(
     ApiPath(id): ApiPath<Uuid>,
     ValidatedJson(req): ValidatedJson<ExportRequest>,
 ) -> AppResult<Response> {
-    let export = DataStudioService::new(&state)
-        .export(&user, id, &req)
+    let export = ExportService::new(&state)
+        .table(&user, id, &req.source, req.format)
         .await?;
+    Ok(export_response(export))
+}
+
+/// A file download whose body is streamed from the export task.
+pub fn export_response(export: ExportStream) -> Response {
     let stream = futures_util::stream::unfold(export.body, |mut rx| async move {
         rx.recv().await.map(|chunk| (chunk, rx))
     });
@@ -83,5 +92,5 @@ pub async fn export(
         headers.insert(header::CONTENT_DISPOSITION, value);
     }
     headers.insert(header::CACHE_CONTROL, HeaderValue::from_static("no-store"));
-    Ok(response)
+    response
 }

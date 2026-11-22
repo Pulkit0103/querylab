@@ -3,7 +3,9 @@ use std::{sync::Arc, time::Duration};
 use sqlx::PgPool;
 
 use crate::{
-    config::Config, middleware::rate_limit::RateLimiter, services::execution::ExecutionRegistry,
+    config::Config,
+    middleware::rate_limit::RateLimiter,
+    services::{data_jobs::DataJobs, execution::ExecutionRegistry},
     utils::crypto::CredentialCipher,
 };
 
@@ -26,6 +28,8 @@ pub struct AppState {
     pub monitor_limiter: Arc<RateLimiter>,
     /// Running executions (cancellation and concurrency limits).
     pub executions: Arc<ExecutionRegistry>,
+    /// Imports and mock data runs in progress.
+    pub jobs: Arc<DataJobs>,
 }
 
 impl AppState {
@@ -38,6 +42,7 @@ impl AppState {
         let query_limiter = RateLimiter::new(config.query_rate_limit_per_minute, minute);
         // The UI refreshes every 5 s at most; leave room for manual refreshes.
         let monitor_limiter = RateLimiter::new(MONITOR_REFRESHES_PER_MINUTE, minute);
+        let jobs = Arc::new(DataJobs::new(config.import_memory_budget));
         Self {
             config: Arc::new(config),
             db,
@@ -47,6 +52,7 @@ impl AppState {
             query_limiter: Arc::new(query_limiter),
             monitor_limiter: Arc::new(monitor_limiter),
             executions: Arc::new(ExecutionRegistry::default()),
+            jobs,
         }
     }
 }
