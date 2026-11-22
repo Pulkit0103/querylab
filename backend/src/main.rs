@@ -14,7 +14,11 @@ async fn run() -> Result<(), Box<dyn std::error::Error>> {
     let _ = dotenvy::dotenv();
 
     let config = Config::from_env()?;
-    telemetry::init(&config.log_format);
+    telemetry::init(
+        &config.log_format,
+        config.error_webhook_url.as_deref(),
+        config.environment.is_production(),
+    );
 
     let pool = database::create_pool(&config)?;
     if config.run_migrations {
@@ -28,6 +32,7 @@ async fn run() -> Result<(), Box<dyn std::error::Error>> {
 
     querylab_api::services::auth::spawn_session_cleanup(pool.clone());
     querylab_api::services::library::spawn_history_retention(pool.clone());
+    querylab_api::services::audit::spawn_retention(pool.clone(), config.audit_retention_days);
     if config.run_migrations {
         match database::data_jobs::fail_interrupted(&pool).await {
             Ok(0) => {}

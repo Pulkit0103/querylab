@@ -3,13 +3,14 @@
 import { useState, type FormEvent } from "react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
-import { Loader2 } from "lucide-react";
+import { Loader2, ShieldCheck } from "lucide-react";
 
 import { Logo } from "@/components/layout/logo";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
-import { useLogin, useRegister } from "@/hooks/use-auth";
+import { useAuthOptions } from "@/hooks/use-account";
+import { needsSecondFactor, useLogin, useLoginSecondFactor, useRegister } from "@/hooks/use-auth";
 import { ApiError } from "@/lib/api-client";
 import { safeNextPath } from "@/lib/auth";
 import type { FieldError } from "@/types/api";
@@ -20,27 +21,112 @@ function fieldErrors(error: ApiError | null): Record<string, string> {
   return Object.fromEntries(fields.map((f) => [f.field, f.message]));
 }
 
+/** Second sign-in step for accounts with two-factor authentication. */
+function SecondFactor({ challenge, onDone, onRestart }: { challenge: string; onDone: () => void; onRestart: () => void }) {
+  const verify = useLoginSecondFactor();
+  const [code, setCode] = useState("");
+  const errors = fieldErrors(verify.error);
+  const expired = verify.error?.status === 401;
+  return (
+    <form
+      className="mt-6 space-y-4"
+      onSubmit={(e) => {
+        e.preventDefault();
+        verify.mutate({ challenge, code: code.trim() }, { onSuccess: onDone });
+      }}
+      noValidate
+    >
+      <p className="flex items-start gap-2 text-sm text-muted-foreground">
+        <ShieldCheck className="mt-0.5 size-4 shrink-0 text-brand" />
+        Enter the 6-digit code from your authenticator app, or one of your recovery codes.
+      </p>
+      <div className="space-y-1.5">
+        <Label htmlFor="code">Code</Label>
+        <Input
+          id="code"
+          autoComplete="one-time-code"
+          inputMode="text"
+          autoFocus
+          value={code}
+          onChange={(e) => setCode(e.target.value)}
+          aria-invalid={!!errors.code}
+        />
+        {errors.code && <p className="text-xs text-destructive">{errors.code}</p>}
+      </div>
+      {expired && (
+        <p role="alert" className="rounded-md border border-destructive/30 bg-destructive/10 px-3 py-2 text-sm text-destructive">
+          This sign-in attempt expired or had too many wrong codes.{" "}
+          <button type="button" className="underline" onClick={onRestart}>
+            Sign in again
+          </button>
+          .
+        </p>
+      )}
+      <Button
+        type="submit"
+        className="w-full bg-brand text-brand-foreground hover:bg-brand/85"
+        size="lg"
+        disabled={verify.isPending || code.trim().length < 6 || expired}
+      >
+        {verify.isPending && <Loader2 className="size-4 animate-spin" />}
+        Verify
+      </Button>
+    </form>
+  );
+}
+
 export function AuthForm({ mode, next }: { mode: "login" | "register"; next: string | null }) {
   const router = useRouter();
   const login = useLogin();
   const register = useRegister();
+  const options = useAuthOptions();
   const mutation = mode === "login" ? login : register;
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
   const [displayName, setDisplayName] = useState("");
+  const [challenge, setChallenge] = useState<string | null>(null);
 
   const errors = fieldErrors(mutation.error);
   const generalError = mutation.error && mutation.error.code !== "validation_error" ? mutation.error.message : null;
+  const done = () => router.replace(safeNextPath(next));
 
   const onSubmit = (e: FormEvent) => {
     e.preventDefault();
-    mutation.mutate(
-      { email, password, ...(mode === "register" && displayName ? { display_name: displayName } : {}) },
-      { onSuccess: () => router.replace(safeNextPath(next)) },
-    );
+    if (mode === "login") {
+      login.mutate(
+        { email, password },
+        {
+          onSuccess: (result) => {
+            if (needsSecondFactor(result)) {
+              setChallenge(result.challenge);
+              setPassword("");
+            } else done();
+          },
+        },
+      );
+    } else {
+      register.mutate({ email, password, ...(displayName ? { display_name: displayName } : {}) }, { onSuccess: done });
+    }
   };
 
   const isLogin = mode === "login";
+
+  if (challenge) {
+    return (
+      <div className="w-full max-w-sm">
+        <Logo className="mb-8" />
+        <h1 className="text-xl font-semibold tracking-tight">Two-factor authentication</h1>
+        <SecondFactor
+          challenge={challenge}
+          onDone={done}
+          onRestart={() => {
+            setChallenge(null);
+            login.reset();
+          }}
+        />
+      </div>
+    );
+  }
 
   return (
     <div className="w-full max-w-sm">
@@ -78,7 +164,14 @@ export function AuthForm({ mode, next }: { mode: "login" | "register"; next: str
           {errors.email && <p className="text-xs text-destructive">{errors.email}</p>}
         </div>
         <div className="space-y-1.5">
-          <Label htmlFor="password">Password</Label>
+          <div className="flex items-baseline justify-between">
+            <Label htmlFor="password">Password</Label>
+            {isLogin && options.data?.password_reset && (
+              <Link href="/forgot-password" className="text-xs text-muted-foreground hover:text-brand hover:underline">
+                Forgot password?
+              </Link>
+            )}
+          </div>
           <Input
             id="password"
             type="password"

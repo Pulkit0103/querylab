@@ -78,6 +78,125 @@ impl Validate for LoginRequest {
     }
 }
 
+fn check_new_password(v: &mut Validator, field: &str, password: &str) {
+    let len = password.chars().count();
+    v.check(
+        len >= MIN_PASSWORD_LEN,
+        field,
+        &format!("must be at least {MIN_PASSWORD_LEN} characters"),
+    )
+    .check(
+        len <= MAX_PASSWORD_LEN,
+        field,
+        &format!("must be at most {MAX_PASSWORD_LEN} characters"),
+    );
+}
+
+#[derive(Deserialize)]
+pub struct TwoFactorLoginRequest {
+    pub challenge: String,
+    pub code: String,
+}
+
+impl Validate for TwoFactorLoginRequest {
+    fn validate(&self) -> Result<(), AppError> {
+        Validator::new()
+            .length("challenge", &self.challenge, 1, 128)
+            .length("code", self.code.trim(), 6, 32)
+            .finish()
+    }
+}
+
+#[derive(Deserialize)]
+pub struct ChangePasswordRequest {
+    pub current_password: Zeroizing<String>,
+    pub new_password: Zeroizing<String>,
+}
+
+impl Validate for ChangePasswordRequest {
+    fn validate(&self) -> Result<(), AppError> {
+        let mut v = Validator::new();
+        v.check(
+            !self.current_password.is_empty()
+                && self.current_password.chars().count() <= MAX_PASSWORD_LEN,
+            "current_password",
+            "is required",
+        );
+        check_new_password(&mut v, "new_password", &self.new_password);
+        v.check(
+            *self.new_password != *self.current_password,
+            "new_password",
+            "must differ from the current password",
+        );
+        v.finish()
+    }
+}
+
+#[derive(Deserialize)]
+pub struct TotpCodeRequest {
+    pub code: String,
+}
+
+impl Validate for TotpCodeRequest {
+    fn validate(&self) -> Result<(), AppError> {
+        Validator::new()
+            .length("code", self.code.trim(), 6, 32)
+            .finish()
+    }
+}
+
+#[derive(Deserialize)]
+pub struct DisableTotpRequest {
+    pub password: Zeroizing<String>,
+    pub code: String,
+}
+
+impl Validate for DisableTotpRequest {
+    fn validate(&self) -> Result<(), AppError> {
+        Validator::new()
+            .check(
+                !self.password.is_empty() && self.password.chars().count() <= MAX_PASSWORD_LEN,
+                "password",
+                "is required",
+            )
+            .length("code", self.code.trim(), 6, 32)
+            .finish()
+    }
+}
+
+#[derive(Deserialize)]
+pub struct ResetRequest {
+    pub email: String,
+}
+
+impl Validate for ResetRequest {
+    fn validate(&self) -> Result<(), AppError> {
+        Validator::new()
+            .length("email", self.email.trim(), 3, 254)
+            .finish()
+    }
+}
+
+#[derive(Deserialize)]
+pub struct ResetConfirmRequest {
+    pub token: String,
+    pub new_password: Zeroizing<String>,
+}
+
+impl Validate for ResetConfirmRequest {
+    fn validate(&self) -> Result<(), AppError> {
+        let mut v = Validator::new();
+        v.length("token", &self.token, 1, 128);
+        check_new_password(&mut v, "new_password", &self.new_password);
+        v.finish()
+    }
+}
+
+#[derive(Deserialize)]
+pub struct ResetCheckQuery {
+    pub token: String,
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

@@ -42,3 +42,20 @@ services:
         value: "10"
       - key: DATABASE_MIN_CONNECTIONS
         value: "2"
+      # Public URL of the web app, used in emailed links.
+      - key: APP_BASE_URL
+        sync: false
+      # Password reset emails: `resend` with RESEND_API_KEY and EMAIL_FROM,
+      # or leave unset to turn password reset off.
+      - key: EMAIL_PROVIDER
+        sync: false
+      - key: RESEND_API_KEY
+        sync: false
+      - key: EMAIL_FROM
+        sync: false
+      # Enables GET /metrics (Prometheus) for scrapers sending this token.
+      - key: METRICS_TOKEN
+        sync: false
+      # ERROR-level events are posted here as JSON (e.g. a Slack webhook).
+      - key: ERROR_WEBHOOK_URL
+        sync: false

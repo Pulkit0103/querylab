@@ -3,6 +3,7 @@
 import { useTheme } from "next-themes";
 import { Plus } from "lucide-react";
 
+import { AccountSecurity } from "@/components/account/account-security";
 import { PageContainer, Section } from "@/components/common/page-container";
 import { ConnectionList } from "@/components/connections/connection-list";
 import { RetentionSetting } from "@/components/library/retention-setting";
@@ -41,6 +42,7 @@ export default function SettingsPage() {
           </div>
           <ConnectionList />
         </section>
+        <AccountSecurity />
         <Section title="Appearance">
           <div className="flex items-center justify-between gap-4">
             <Label htmlFor="theme">Theme</Label>

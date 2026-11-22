@@ -3,7 +3,7 @@ use uuid::Uuid;
 
 use crate::models::user::UserRecord;
 
-const COLUMNS: &str = "id, email, password_hash, display_name, created_at";
+const COLUMNS: &str = "id, email, password_hash, display_name, created_at, totp_enabled_at";
 
 pub async fn insert(
     db: &PgPool,
@@ -44,7 +44,7 @@ pub async fn update_password_hash(
     id: Uuid,
     password_hash: &str,
 ) -> Result<(), sqlx::Error> {
-    sqlx::query("UPDATE users SET password_hash = $2 WHERE id = $1")
+    sqlx::query("UPDATE users SET password_hash = $2, password_changed_at = now() WHERE id = $1")
         .bind(id)
         .bind(password_hash)
         .execute(db)

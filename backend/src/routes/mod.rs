@@ -17,7 +17,7 @@ use tower_http::{
 use crate::{
     handlers,
     middleware::{
-        csrf,
+        csrf, metrics,
         observability::{self, REQUEST_ID},
     },
     state::AppState,
@@ -28,8 +28,8 @@ const MAX_BODY_BYTES: usize = 2 * 1024 * 1024;
 
 pub fn build_router(state: AppState) -> Router {
     use handlers::{
-        auth, connections, data, data_jobs, diagrams, library, migrations, monitoring, performance,
-        query, schema, workspace,
+        account, audit, auth, connections, data, data_jobs, diagrams, library, migrations,
+        monitoring, performance, query, schema, workspace,
     };
 
     let api = Router::new()
@@ -40,6 +40,30 @@ pub fn build_router(state: AppState) -> Router {
         .route("/auth/login", post(auth::login))
         .route("/auth/logout", post(auth::logout))
         .route("/auth/me", get(auth::me))
+        .route("/auth/options", get(auth::options))
+        .route("/auth/login/2fa", post(auth::login_two_factor))
+        .route("/auth/security", get(account::security))
+        .route("/auth/password", post(account::change_password))
+        .route(
+            "/auth/sessions",
+            get(account::sessions).delete(account::revoke_other_sessions),
+        )
+        .route(
+            "/auth/sessions/{id}",
+            axum::routing::delete(account::revoke_session),
+        )
+        .route("/auth/2fa/enroll", post(account::totp_enroll))
+        .route("/auth/2fa/verify", post(account::totp_verify))
+        .route("/auth/2fa/disable", post(account::totp_disable))
+        .route("/auth/2fa/recovery-codes", post(account::recovery_codes))
+        .route(
+            "/auth/password-reset",
+            get(account::check_reset).post(account::request_reset),
+        )
+        .route("/auth/password-reset/confirm", post(account::confirm_reset))
+        // Audit log
+        .route("/audit-events", get(audit::list))
+        .route("/audit-events/export", get(audit::export))
         // Database connections (all require an authenticated user)
         .route(
             "/connections",
@@ -238,9 +262,19 @@ pub fn build_router(state: AppState) -> Router {
     // Layers listed later wrap the ones before them (outermost last).
     Router::new()
         .route("/health", get(handlers::health::health))
+        .route("/metrics", get(metrics::handler))
         .nest("/api", api)
         .fallback(handlers::not_found)
         .layer(DefaultBodyLimit::max(MAX_BODY_BYTES))
+        // Client address and request id for audit events.
+        .layer(axum::middleware::from_fn_with_state(
+            state.clone(),
+            crate::services::audit::capture,
+        ))
+        .layer(axum::middleware::from_fn_with_state(
+            state.clone(),
+            metrics::track,
+        ))
         // Runs inside CORS so preflight requests are answered first.
         .layer(axum::middleware::from_fn(csrf::require_csrf_header))
         .layer(TimeoutLayer::with_status_code(

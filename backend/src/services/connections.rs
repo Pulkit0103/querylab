@@ -1,5 +1,6 @@
 //! Business logic for user-owned database connections and their groups.
 
+use serde_json::json;
 use sqlx::PgPool;
 use uuid::Uuid;
 use zeroize::Zeroizing;
@@ -12,7 +13,10 @@ use crate::{
         ConnectionGroup, ConnectionGroupRequest, ConnectionRecord, ConnectionResponse,
         ConnectionSecret, ConnectionStatus, CreateConnectionRequest, UpdateConnectionRequest,
     },
-    services::target_db::{self, ConnectionTestResult, TargetSpec},
+    services::{
+        audit::{self, AuditEvent},
+        target_db::{self, ConnectionTestResult, TargetSpec},
+    },
     state::AppState,
     utils::{crypto::CredentialCipher, network},
 };
@@ -131,6 +135,13 @@ impl<'a> ConnectionService<'a> {
         .await
         .map_err(write_error)?;
         tracing::info!(connection_id = %record.id, %user_id, "connection created");
+        audit::record(
+            self.db,
+            AuditEvent::new(Some(user_id), "connection.created")
+                .connection(record.id)
+                .detail(json!({ "name": record.name, "environment": record.environment, "read_only": record.read_only })),
+        )
+        .await;
         Ok(ConnectionResponse::from(&record))
     }
 
@@ -198,6 +209,18 @@ impl<'a> ConnectionService<'a> {
         .await
         .map_err(write_error)?
         .ok_or(AppError::NotFound("connection"))?;
+        audit::record(
+            self.db,
+            AuditEvent::new(Some(user_id), "connection.updated")
+                .connection(id)
+                .detail(json!({
+                    "target_changed": reset_status,
+                    "password_changed": req.password.is_some(),
+                    "read_only": record.read_only,
+                    "environment": record.environment,
+                })),
+        )
+        .await;
         Ok(ConnectionResponse::from(&record))
     }
 
@@ -232,6 +255,13 @@ impl<'a> ConnectionService<'a> {
         .await
         .map_err(write_error)?;
         tracing::info!(connection_id = %record.id, source_id = %id, %user_id, "connection duplicated");
+        audit::record(
+            self.db,
+            AuditEvent::new(Some(user_id), "connection.created")
+                .connection(record.id)
+                .detail(json!({ "name": record.name, "duplicated_from": id })),
+        )
+        .await;
         Ok(ConnectionResponse::from(&record))
     }
 
@@ -256,6 +286,11 @@ impl<'a> ConnectionService<'a> {
     pub async fn delete(&self, user_id: Uuid, id: Uuid) -> AppResult<()> {
         if repo::delete_for_user(self.db, user_id, id).await? {
             tracing::info!(connection_id = %id, %user_id, "connection deleted");
+            audit::record(
+                self.db,
+                AuditEvent::new(Some(user_id), "connection.deleted").target("connection", id),
+            )
+            .await;
             Ok(())
         } else {
             Err(AppError::NotFound("connection"))

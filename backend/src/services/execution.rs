@@ -127,6 +127,11 @@ impl ExecutionRegistry {
         Some((r.connection_id, r.pid))
     }
 
+    /// Executions in progress on this instance.
+    pub fn running(&self) -> usize {
+        self.lock().len()
+    }
+
     pub fn running_for_user(&self, user_id: Uuid) -> usize {
         self.lock()
             .values()

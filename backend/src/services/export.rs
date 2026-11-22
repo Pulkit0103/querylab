@@ -32,6 +32,7 @@ use crate::{
         data_jobs::{JobKind, JobStatus, JobView},
     },
     services::{
+        audit::{self, AuditEvent},
         auth::AuthUser,
         connections::ConnectionService,
         data_studio::{close, load_table, DataStudioService},
@@ -371,7 +372,7 @@ fn spawn(
 ) -> mpsc::Receiver<Result<Bytes, std::io::Error>> {
     let (tx, rx) = mpsc::channel(8);
     let db = state.db.clone();
-    tokio::spawn(async move {
+    crate::services::audit::spawn_in_request(async move {
         let started = Instant::now();
         let started_at = chrono::Utc::now();
         let result = pump(&mut conn, &rows, enc, limit, &tx).await;
@@ -411,6 +412,18 @@ fn spawn(
             }
         }
         drop(guard);
+        audit::record(
+            &db,
+            AuditEvent::new(Some(user_id), "data.exported")
+                .connection(connection_id)
+                .detail(serde_json::json!({
+                    "target": view.target,
+                    "status": view.status.as_str(),
+                    "rows": view.rows_processed,
+                    "truncated": view.truncated,
+                })),
+        )
+        .await;
         if let Err(err) = jobs_repo::finish(&db, user_id, &view).await {
             tracing::warn!(error = %err, "failed to record export");
         }
