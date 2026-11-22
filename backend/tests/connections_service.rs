@@ -181,7 +181,8 @@ async fn saved_queries_cannot_reference_another_users_connection(pool: PgPool) {
         .create_saved(bob, &req)
         .await
         .unwrap_err();
-    assert!(matches!(err, AppError::BadRequest(_)), "{err:?}");
+    // Reported like any unknown id.
+    assert!(matches!(err, AppError::NotFound("connection")), "{err:?}");
     // Alice can.
     LibraryService::new(&state)
         .create_saved(alice, &req)
