@@ -26,7 +26,8 @@ const connections: Connection[] = [
 function withData(ui: ReactNode, data: Connection[] = connections) {
   const qc = new QueryClient({ defaultOptions: { queries: { retry: false, staleTime: Infinity } } });
   qc.setQueryData(["connections"], data);
-  qc.setQueryData(["connection-groups"], groups);
+  // Groups are per workspace; no workspace is selected in these tests.
+  qc.setQueryData(["connection-groups", null], groups);
   return render(<QueryClientProvider client={qc}>{ui}</QueryClientProvider>);
 }
 

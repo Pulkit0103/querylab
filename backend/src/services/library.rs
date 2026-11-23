@@ -10,6 +10,7 @@ use crate::{
         self as repo, FolderRejection, HistoryFilter, NewHistory, SavedFilter, SavedQueryRow,
     },
     errors::{AppError, AppResult},
+    models::workspaces::{Access, Role},
     models::{
         library::{
             normalize_tags, Collection, CreateSavedQuery, HistoryEntry, HistoryKind, HistoryPage,
@@ -18,7 +19,10 @@ use crate::{
         },
         query::QueryResult,
     },
-    services::audit::{self, AuditEvent},
+    services::{
+        audit::{self, AuditEvent},
+        authz,
+    },
     state::AppState,
 };
 
@@ -306,21 +310,71 @@ impl<'a> LibraryService<'a> {
     }
 
     // -- collections ------------------------------------------------------
+    //
+    // Folders and saved queries belong to a workspace: every member can read
+    // them; editors and above change them.
 
-    pub async fn collections(&self, user_id: Uuid) -> AppResult<Vec<Collection>> {
-        Ok(repo::list_collections(&self.state.db, user_id).await?)
+    /// The workspace of a folder the user can see (404 otherwise).
+    async fn collection_scope(&self, user_id: Uuid, id: Uuid, min: Role) -> AppResult<Uuid> {
+        let workspace_id = repo::collection_workspace(&self.state.db, id)
+            .await?
+            .ok_or(AppError::NotFound("collection"))?;
+        authz::workspace_role(self.state, user_id, workspace_id)
+            .await
+            .map_err(|_| AppError::NotFound("collection"))?;
+        authz::require_role(self.state, user_id, workspace_id, min).await?;
+        Ok(workspace_id)
+    }
+
+    /// The workspace of a saved query the user can see (404 otherwise).
+    async fn saved_scope(&self, user_id: Uuid, id: Uuid, min: Role) -> AppResult<Uuid> {
+        let workspace_id = repo::saved_workspace(&self.state.db, id)
+            .await?
+            .ok_or(AppError::NotFound("saved query"))?;
+        authz::workspace_role(self.state, user_id, workspace_id)
+            .await
+            .map_err(|_| AppError::NotFound("saved query"))?;
+        authz::require_role(self.state, user_id, workspace_id, min).await?;
+        Ok(workspace_id)
+    }
+
+    /// A linked connection must be one the user can use; one they cannot see
+    /// is reported as missing (404), like a foreign collection.
+    async fn check_connection(&self, user_id: Uuid, connection_id: Option<Uuid>) -> AppResult<()> {
+        if let Some(id) = connection_id {
+            authz::connection(self.state, user_id, id, Access::Read).await?;
+        }
+        Ok(())
+    }
+
+    pub async fn collections(
+        &self,
+        user_id: Uuid,
+        workspace_id: Option<Uuid>,
+    ) -> AppResult<Vec<Collection>> {
+        let workspace_id = authz::resolve_workspace(self.state, user_id, workspace_id).await?;
+        Ok(repo::list_collections(&self.state.db, workspace_id).await?)
     }
 
     pub async fn create_collection(
         &self,
         user_id: Uuid,
+        workspace_id: Option<Uuid>,
         name: &str,
         parent_id: Option<Uuid>,
     ) -> AppResult<Collection> {
-        repo::insert_collection(&self.state.db, user_id, name.trim(), parent_id)
-            .await
-            .map_err(reference_error)?
-            .map_err(folder_error)
+        let workspace_id = authz::resolve_workspace(self.state, user_id, workspace_id).await?;
+        authz::require_role(self.state, user_id, workspace_id, Role::Editor).await?;
+        repo::insert_collection(
+            &self.state.db,
+            user_id,
+            workspace_id,
+            name.trim(),
+            parent_id,
+        )
+        .await
+        .map_err(reference_error)?
+        .map_err(folder_error)
     }
 
     /// Renames and/or moves a folder; moves are checked for cycles and depth.
@@ -330,9 +384,10 @@ impl<'a> LibraryService<'a> {
         id: Uuid,
         req: &UpdateCollectionRequest,
     ) -> AppResult<Collection> {
+        let workspace_id = self.collection_scope(user_id, id, Role::Editor).await?;
         repo::update_collection(
             &self.state.db,
-            user_id,
+            workspace_id,
             id,
             req.name.as_deref().map(str::trim),
             req.parent_id,
@@ -343,7 +398,8 @@ impl<'a> LibraryService<'a> {
     }
 
     pub async fn delete_collection(&self, user_id: Uuid, id: Uuid) -> AppResult<()> {
-        if repo::delete_collection(&self.state.db, user_id, id).await? {
+        let workspace_id = self.collection_scope(user_id, id, Role::Editor).await?;
+        if repo::delete_collection(&self.state.db, workspace_id, id).await? {
             Ok(())
         } else {
             Err(AppError::NotFound("collection"))
@@ -357,11 +413,12 @@ impl<'a> LibraryService<'a> {
         user_id: Uuid,
         f: &SavedQueryFilter,
     ) -> AppResult<Vec<SavedQuery>> {
+        let workspace_id = authz::resolve_workspace(self.state, user_id, f.workspace_id).await?;
         let search = f.q.as_deref().map(str::trim).filter(|s| !s.is_empty());
         let tags = f.tag_list();
         Ok(repo::list_saved(
             &self.state.db,
-            user_id,
+            workspace_id,
             &SavedFilter {
                 collection_id: f.collection_id,
                 search,
@@ -373,17 +430,24 @@ impl<'a> LibraryService<'a> {
     }
 
     pub async fn pin_saved(&self, user_id: Uuid, id: Uuid, pinned: bool) -> AppResult<SavedQuery> {
-        repo::set_saved_pinned(&self.state.db, user_id, id, pinned)
+        let workspace_id = self.saved_scope(user_id, id, Role::Editor).await?;
+        repo::set_saved_pinned(&self.state.db, workspace_id, id, pinned)
             .await?
             .ok_or(AppError::NotFound("saved query"))
     }
 
-    pub async fn tags(&self, user_id: Uuid) -> AppResult<Vec<TagCount>> {
-        Ok(repo::list_tags(&self.state.db, user_id).await?)
+    pub async fn tags(
+        &self,
+        user_id: Uuid,
+        workspace_id: Option<Uuid>,
+    ) -> AppResult<Vec<TagCount>> {
+        let workspace_id = authz::resolve_workspace(self.state, user_id, workspace_id).await?;
+        Ok(repo::list_tags(&self.state.db, workspace_id).await?)
     }
 
     pub async fn saved_query(&self, user_id: Uuid, id: Uuid) -> AppResult<SavedQuery> {
-        repo::get_saved(&self.state.db, user_id, id)
+        let workspace_id = self.saved_scope(user_id, id, Role::Viewer).await?;
+        repo::get_saved(&self.state.db, workspace_id, id)
             .await?
             .ok_or(AppError::NotFound("saved query"))
     }
@@ -393,6 +457,9 @@ impl<'a> LibraryService<'a> {
         user_id: Uuid,
         req: &CreateSavedQuery,
     ) -> AppResult<SavedQuery> {
+        let workspace_id = authz::resolve_workspace(self.state, user_id, req.workspace_id).await?;
+        authz::require_role(self.state, user_id, workspace_id, Role::Editor).await?;
+        self.check_connection(user_id, req.connection_id).await?;
         let description = req
             .description
             .as_deref()
@@ -404,6 +471,7 @@ impl<'a> LibraryService<'a> {
             &SavedQueryRow {
                 id: Uuid::new_v4(),
                 user_id,
+                workspace_id,
                 name: req.name.trim(),
                 description,
                 sql_content: &req.sql_content,
@@ -422,7 +490,15 @@ impl<'a> LibraryService<'a> {
         id: Uuid,
         req: &UpdateSavedQuery,
     ) -> AppResult<SavedQuery> {
-        let existing = self.saved_query(user_id, id).await?;
+        let workspace_id = self.saved_scope(user_id, id, Role::Editor).await?;
+        let existing = repo::get_saved(&self.state.db, workspace_id, id)
+            .await?
+            .ok_or(AppError::NotFound("saved query"))?;
+        if let Some(Some(connection_id)) = req.connection_id {
+            if Some(connection_id) != existing.connection_id {
+                self.check_connection(user_id, Some(connection_id)).await?;
+            }
+        }
         let description = match &req.description {
             Some(d) => d.as_deref().map(str::trim).filter(|d| !d.is_empty()),
             None => existing.description.as_deref(),
@@ -436,6 +512,7 @@ impl<'a> LibraryService<'a> {
             &SavedQueryRow {
                 id,
                 user_id,
+                workspace_id,
                 name: req.name.as_deref().map(str::trim).unwrap_or(&existing.name),
                 description,
                 sql_content: req.sql_content.as_deref().unwrap_or(&existing.sql_content),
@@ -450,13 +527,13 @@ impl<'a> LibraryService<'a> {
     }
 
     pub async fn delete_saved(&self, user_id: Uuid, id: Uuid) -> AppResult<()> {
-        if repo::delete_saved(&self.state.db, user_id, id).await? {
+        let workspace_id = self.saved_scope(user_id, id, Role::Editor).await?;
+        if repo::delete_saved(&self.state.db, workspace_id, id).await? {
             Ok(())
         } else {
             Err(AppError::NotFound("saved query"))
         }
     }
-
     // -- stats ------------------------------------------------------------
 
     pub async fn stats(&self, user_id: Uuid, days: Option<i32>) -> AppResult<StatsResponse> {

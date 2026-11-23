@@ -1,36 +1,41 @@
-//! Business logic for user-owned database connections and their groups.
+//! Business logic for database connections, their groups and who may use
+//! them. Connections belong to workspaces; access is decided by
+//! [`authz`](crate::services::authz).
 
 use serde_json::json;
-use sqlx::PgPool;
 use uuid::Uuid;
 use zeroize::Zeroizing;
 
 use crate::{
-    config::Config,
-    database::connections::{self as repo, NewConnection},
+    database::{
+        connections::{self as repo, NewConnection},
+        workspaces as workspaces_repo,
+    },
     errors::{AppError, AppResult},
-    models::connection::{
-        ConnectionGroup, ConnectionGroupRequest, ConnectionRecord, ConnectionResponse,
-        ConnectionSecret, ConnectionStatus, CreateConnectionRequest, UpdateConnectionRequest,
+    models::{
+        connection::{
+            ConnectionGroup, ConnectionGroupRequest, ConnectionRecord, ConnectionResponse,
+            ConnectionSecret, ConnectionStatus, CreateConnectionRequest, UpdateConnectionRequest,
+        },
+        workspaces::{Access, MemberAccess, Role},
     },
     services::{
         audit::{self, AuditEvent},
+        authz::{self, ConnectionAccess},
         target_db::{self, ConnectionTestResult, TargetSpec},
     },
     state::AppState,
-    utils::{crypto::CredentialCipher, network},
+    utils::network,
 };
 
 /// Stored error messages are truncated to this many characters.
 const MAX_STATUS_ERROR_CHARS: usize = 500;
 
 pub struct ConnectionService<'a> {
-    db: &'a PgPool,
-    cipher: &'a CredentialCipher,
-    config: &'a Config,
+    state: &'a AppState,
 }
 
-/// Associated data binding a ciphertext to its owner and row.
+/// Associated data binding a ciphertext to its creator and row.
 fn credentials_aad(user_id: Uuid, connection_id: Uuid) -> Vec<u8> {
     format!("querylab/connection/v1/{user_id}/{connection_id}").into_bytes()
 }
@@ -45,33 +50,51 @@ fn normalise_pem(pem: Option<&str>) -> Option<String> {
 
 impl<'a> ConnectionService<'a> {
     pub fn new(state: &'a AppState) -> Self {
-        Self {
-            db: &state.db,
-            cipher: &state.cipher,
-            config: &state.config,
-        }
+        Self { state }
     }
 
-    pub async fn list(&self, user_id: Uuid) -> AppResult<Vec<ConnectionResponse>> {
-        let rows = repo::list_for_user(self.db, user_id).await?;
-        Ok(rows.iter().map(ConnectionResponse::from).collect())
+    /// Connections the user can see, optionally in one workspace.
+    pub async fn list(
+        &self,
+        user_id: Uuid,
+        workspace_id: Option<Uuid>,
+    ) -> AppResult<Vec<ConnectionResponse>> {
+        let rows = repo::list_with_access(&self.state.db, user_id, workspace_id).await?;
+        Ok(rows
+            .iter()
+            .filter_map(|r| {
+                let role = Role::parse(&r.member_role)?;
+                let access =
+                    Access::effective(role, r.grant_access.as_deref().and_then(Access::parse));
+                (access != Access::None).then(|| ConnectionResponse::with_access(&r.record, access))
+            })
+            .collect())
     }
 
-    /// Loads a connection owned by `user_id`. Returns 404 (not 403) for other
-    /// users' connections so ids cannot be probed.
+    /// Loads a connection the user may read. Returns 404 (not 403) for
+    /// connections the user cannot see, so ids cannot be probed.
     pub async fn get_record(&self, user_id: Uuid, id: Uuid) -> AppResult<ConnectionRecord> {
-        repo::find_for_user(self.db, user_id, id)
+        Ok(authz::connection(self.state, user_id, id, Access::Read)
             .await?
-            .ok_or(AppError::NotFound("connection"))
+            .record)
+    }
+
+    /// Loads a connection the user may use with at least `need` access.
+    pub async fn require(
+        &self,
+        user_id: Uuid,
+        id: Uuid,
+        need: Access,
+    ) -> AppResult<ConnectionAccess> {
+        authz::connection(self.state, user_id, id, need).await
     }
 
     pub async fn get(&self, user_id: Uuid, id: Uuid) -> AppResult<ConnectionResponse> {
-        Ok(ConnectionResponse::from(
-            &self.get_record(user_id, id).await?,
-        ))
+        let a = self.require(user_id, id, Access::Read).await?;
+        Ok(ConnectionResponse::with_access(&a.record, a.access))
     }
 
-    fn encrypt_secret(&self, user_id: Uuid, id: Uuid, password: &str) -> AppResult<Vec<u8>> {
+    fn encrypt_secret(&self, creator: Uuid, id: Uuid, password: &str) -> AppResult<Vec<u8>> {
         let secret = ConnectionSecret {
             password: password.to_string(),
         };
@@ -79,14 +102,16 @@ impl<'a> ConnectionService<'a> {
             serde_json::to_vec(&secret)
                 .map_err(|e| AppError::internal(format!("serialise secret: {e}")))?,
         );
-        self.cipher
-            .encrypt(&plaintext, &credentials_aad(user_id, id))
+        self.state
+            .cipher
+            .encrypt(&plaintext, &credentials_aad(creator, id))
             .map_err(|e| AppError::internal(format!("encrypt credentials: {e}")))
     }
 
-    /// Decrypts the stored secret for a connection the caller already owns.
+    /// Decrypts the stored secret of a connection the caller may use.
     pub fn decrypt_secret(&self, record: &ConnectionRecord) -> AppResult<ConnectionSecret> {
         let plaintext = self
+            .state
             .cipher
             .decrypt(
                 &record.encrypted_credentials,
@@ -99,25 +124,30 @@ impl<'a> ConnectionService<'a> {
             .map_err(|e| AppError::internal(format!("parse credentials for {}: {e}", record.id)))
     }
 
+    /// Creates a connection in a workspace (editors and above).
     pub async fn create(
         &self,
         user_id: Uuid,
         req: &CreateConnectionRequest,
     ) -> AppResult<ConnectionResponse> {
+        let workspace_id = authz::resolve_workspace(self.state, user_id, req.workspace_id).await?;
+        let (role, _) =
+            authz::require_role(self.state, user_id, workspace_id, Role::Editor).await?;
         network::precheck(
             req.host.trim(),
             req.port,
-            self.config.allow_private_networks,
+            self.state.config.allow_private_networks,
         )?;
         let id = Uuid::new_v4();
         let encrypted = self.encrypt_secret(user_id, id, &req.password)?;
         let color = normalise_color(req.color.as_deref());
         let pem = normalise_pem(req.ssl_root_cert.as_deref());
         let record = repo::insert(
-            self.db,
+            &self.state.db,
             &NewConnection {
                 id,
                 user_id,
+                workspace_id,
                 name: req.name.trim(),
                 host: req.host.trim(),
                 port: req.port,
@@ -134,15 +164,17 @@ impl<'a> ConnectionService<'a> {
         )
         .await
         .map_err(write_error)?;
+        self.grant_creator(role, record.id, user_id).await?;
         tracing::info!(connection_id = %record.id, %user_id, "connection created");
         audit::record(
-            self.db,
+            &self.state.db,
             AuditEvent::new(Some(user_id), "connection.created")
                 .connection(record.id)
+                .workspace(Some(workspace_id))
                 .detail(json!({ "name": record.name, "environment": record.environment, "read_only": record.read_only })),
         )
         .await;
-        Ok(ConnectionResponse::from(&record))
+        Ok(ConnectionResponse::with_access(&record, Access::Admin))
     }
 
     pub async fn update(
@@ -151,13 +183,19 @@ impl<'a> ConnectionService<'a> {
         id: Uuid,
         req: &UpdateConnectionRequest,
     ) -> AppResult<ConnectionResponse> {
-        let existing = self.get_record(user_id, id).await?;
+        let existing = self.require(user_id, id, Access::Admin).await?.record;
+        // The ciphertext stays bound to the creator whoever edits it.
+        let creator = existing.user_id;
         let encrypted = match &req.password {
-            Some(password) => self.encrypt_secret(user_id, id, password)?,
-            None if self.cipher.needs_rotation(&existing.encrypted_credentials) => {
+            Some(password) => self.encrypt_secret(creator, id, password)?,
+            None if self
+                .state
+                .cipher
+                .needs_rotation(&existing.encrypted_credentials) =>
+            {
                 // Opportunistically re-encrypt with the current key.
                 let secret = self.decrypt_secret(&existing)?;
-                self.encrypt_secret(user_id, id, &secret.password)?
+                self.encrypt_secret(creator, id, &secret.password)?
             }
             None => existing.encrypted_credentials.clone(),
         };
@@ -175,7 +213,7 @@ impl<'a> ConnectionService<'a> {
             Some(p) => normalise_pem(p.as_deref()),
             None => existing.ssl_root_cert.clone(),
         };
-        network::precheck(host, port, self.config.allow_private_networks)?;
+        network::precheck(host, port, self.state.config.allow_private_networks)?;
 
         // The last test result no longer applies once the target changes.
         let reset_status = host != existing.host
@@ -187,10 +225,11 @@ impl<'a> ConnectionService<'a> {
             || pem != existing.ssl_root_cert;
 
         let record = repo::update(
-            self.db,
+            &self.state.db,
             &NewConnection {
                 id,
-                user_id,
+                user_id: creator,
+                workspace_id: existing.workspace_id,
                 name,
                 host,
                 port,
@@ -210,9 +249,10 @@ impl<'a> ConnectionService<'a> {
         .map_err(write_error)?
         .ok_or(AppError::NotFound("connection"))?;
         audit::record(
-            self.db,
+            &self.state.db,
             AuditEvent::new(Some(user_id), "connection.updated")
                 .connection(id)
+                .workspace(Some(record.workspace_id))
                 .detail(json!({
                     "target_changed": reset_status,
                     "password_changed": req.password.is_some(),
@@ -221,23 +261,28 @@ impl<'a> ConnectionService<'a> {
                 })),
         )
         .await;
-        Ok(ConnectionResponse::from(&record))
+        Ok(ConnectionResponse::with_access(&record, Access::Admin))
     }
 
     /// Copies a connection, including its credentials, under a free
-    /// "<name> (copy)" name. The secret is re-encrypted because the
-    /// ciphertext is bound to the connection id.
+    /// "<name> (copy)" name in the same workspace. The secret is
+    /// re-encrypted because the ciphertext is bound to the connection id.
     pub async fn duplicate(&self, user_id: Uuid, id: Uuid) -> AppResult<ConnectionResponse> {
-        let source = self.get_record(user_id, id).await?;
+        let source = self.require(user_id, id, Access::Admin).await?.record;
+        let (role, _) =
+            authz::require_role(self.state, user_id, source.workspace_id, Role::Editor).await?;
         let secret = self.decrypt_secret(&source)?;
-        let name = self.free_copy_name(user_id, &source.name).await?;
+        let name = self
+            .free_copy_name(source.workspace_id, &source.name)
+            .await?;
         let new_id = Uuid::new_v4();
         let encrypted = self.encrypt_secret(user_id, new_id, &secret.password)?;
         let record = repo::insert(
-            self.db,
+            &self.state.db,
             &NewConnection {
                 id: new_id,
                 user_id,
+                workspace_id: source.workspace_id,
                 name: &name,
                 host: &source.host,
                 port: source.port(),
@@ -254,18 +299,35 @@ impl<'a> ConnectionService<'a> {
         )
         .await
         .map_err(write_error)?;
+        self.grant_creator(role, record.id, user_id).await?;
         tracing::info!(connection_id = %record.id, source_id = %id, %user_id, "connection duplicated");
         audit::record(
-            self.db,
+            &self.state.db,
             AuditEvent::new(Some(user_id), "connection.created")
                 .connection(record.id)
+                .workspace(Some(record.workspace_id))
                 .detail(json!({ "name": record.name, "duplicated_from": id })),
         )
         .await;
-        Ok(ConnectionResponse::from(&record))
+        Ok(ConnectionResponse::with_access(&record, Access::Admin))
     }
 
-    async fn free_copy_name(&self, user_id: Uuid, base: &str) -> AppResult<String> {
+    /// Whoever creates a connection manages it (owners and admins already
+    /// manage every connection).
+    async fn grant_creator(&self, role: Role, connection_id: Uuid, user_id: Uuid) -> AppResult<()> {
+        if role < Role::Admin {
+            workspaces_repo::set_grant(
+                &self.state.db,
+                connection_id,
+                user_id,
+                Some(Access::Admin.as_str()),
+            )
+            .await?;
+        }
+        Ok(())
+    }
+
+    async fn free_copy_name(&self, workspace_id: Uuid, base: &str) -> AppResult<String> {
         // Leave room for the suffix within the 100-character limit.
         let stem: String = base.chars().take(85).collect();
         for n in 1..=50 {
@@ -274,7 +336,7 @@ impl<'a> ConnectionService<'a> {
             } else {
                 format!("{stem} (copy {n})")
             };
-            if !repo::name_exists(self.db, user_id, &candidate).await? {
+            if !repo::name_exists(&self.state.db, workspace_id, &candidate).await? {
                 return Ok(candidate);
             }
         }
@@ -284,11 +346,15 @@ impl<'a> ConnectionService<'a> {
     }
 
     pub async fn delete(&self, user_id: Uuid, id: Uuid) -> AppResult<()> {
-        if repo::delete_for_user(self.db, user_id, id).await? {
+        let a = self.require(user_id, id, Access::Admin).await?;
+        if repo::delete(&self.state.db, id).await? {
             tracing::info!(connection_id = %id, %user_id, "connection deleted");
             audit::record(
-                self.db,
-                AuditEvent::new(Some(user_id), "connection.deleted").target("connection", id),
+                &self.state.db,
+                AuditEvent::new(Some(user_id), "connection.deleted")
+                    .target("connection", id)
+                    .workspace(Some(a.record.workspace_id))
+                    .detail(json!({ "name": a.record.name })),
             )
             .await;
             Ok(())
@@ -302,15 +368,16 @@ impl<'a> ConnectionService<'a> {
     pub async fn test_saved(&self, user_id: Uuid, id: Uuid) -> AppResult<ConnectionTestResult> {
         let record = self.get_record(user_id, id).await?;
         let secret = self.decrypt_secret(&record)?;
-        let outcome =
-            target_db::test_connection(self.config, &TargetSpec::from_record(&record, &secret))
-                .await;
+        let outcome = target_db::test_connection(
+            &self.state.config,
+            &TargetSpec::from_record(&record, &secret),
+        )
+        .await;
         match outcome {
             Ok(result) => {
                 let latency = i32::try_from(result.latency_ms).unwrap_or(i32::MAX);
                 repo::record_status(
-                    self.db,
-                    user_id,
+                    &self.state.db,
                     id,
                     ConnectionStatus::Online.as_str(),
                     Some(latency),
@@ -327,8 +394,7 @@ impl<'a> ConnectionService<'a> {
                     .take(MAX_STATUS_ERROR_CHARS)
                     .collect();
                 repo::record_status(
-                    self.db,
-                    user_id,
+                    &self.state.db,
                     id,
                     failure.status.as_str(),
                     None,
@@ -340,10 +406,75 @@ impl<'a> ConnectionService<'a> {
         }
     }
 
-    // -- groups -----------------------------------------------------------
+    // -- access -------------------------------------------------------------
 
-    pub async fn groups(&self, user_id: Uuid) -> AppResult<Vec<ConnectionGroup>> {
-        Ok(repo::list_groups(self.db, user_id).await?)
+    /// Workspace members with their access to the connection.
+    pub async fn grants(&self, user_id: Uuid, id: Uuid) -> AppResult<Vec<MemberAccess>> {
+        self.require(user_id, id, Access::Admin).await?;
+        let rows = workspaces_repo::grants(&self.state.db, id).await?;
+        Ok(rows
+            .into_iter()
+            .filter_map(|r| {
+                let role = Role::parse(&r.role)?;
+                let grant = r.grant.as_deref().and_then(Access::parse);
+                Some(MemberAccess {
+                    user_id: r.user_id,
+                    email: r.email,
+                    display_name: r.display_name,
+                    role,
+                    grant,
+                    effective: Access::effective(role, grant),
+                })
+            })
+            .collect())
+    }
+
+    /// Sets (or clears) a member's explicit access to the connection.
+    pub async fn set_grant(
+        &self,
+        user_id: Uuid,
+        id: Uuid,
+        member: Uuid,
+        access: Option<Access>,
+    ) -> AppResult<Vec<MemberAccess>> {
+        let a = self.require(user_id, id, Access::Admin).await?;
+        let (role, _) = authz::workspace_role(self.state, member, a.record.workspace_id)
+            .await
+            .map_err(|_| AppError::NotFound("member"))?;
+        if role >= Role::Admin {
+            return Err(AppError::validation(
+                "access",
+                "workspace owners and admins always manage every connection",
+            ));
+        }
+        if role == Role::Viewer && access.is_some_and(|x| x > Access::Read) {
+            return Err(AppError::validation(
+                "access",
+                "viewers can have at most read access; change their role first",
+            ));
+        }
+        workspaces_repo::set_grant(&self.state.db, id, member, access.map(Access::as_str)).await?;
+        audit::record(
+            &self.state.db,
+            AuditEvent::new(Some(user_id), "permission.grant_changed")
+                .connection(id)
+                .workspace(Some(a.record.workspace_id))
+                .target("user", member)
+                .detail(json!({ "access": access.map(Access::as_str) })),
+        )
+        .await;
+        self.grants(user_id, id).await
+    }
+
+    // -- groups -------------------------------------------------------------
+
+    pub async fn groups(
+        &self,
+        user_id: Uuid,
+        workspace_id: Option<Uuid>,
+    ) -> AppResult<Vec<ConnectionGroup>> {
+        let workspace_id = authz::resolve_workspace(self.state, user_id, workspace_id).await?;
+        Ok(repo::list_groups(&self.state.db, workspace_id).await?)
     }
 
     pub async fn create_group(
@@ -351,13 +482,32 @@ impl<'a> ConnectionService<'a> {
         user_id: Uuid,
         req: &ConnectionGroupRequest,
     ) -> AppResult<ConnectionGroup> {
+        let workspace_id = authz::resolve_workspace(self.state, user_id, req.workspace_id).await?;
+        authz::require_role(self.state, user_id, workspace_id, Role::Editor).await?;
         let position = match req.position {
             Some(p) => p,
-            None => repo::next_group_position(self.db, user_id).await?,
+            None => repo::next_group_position(&self.state.db, workspace_id).await?,
         };
-        repo::insert_group(self.db, user_id, req.name.trim(), position)
+        repo::insert_group(
+            &self.state.db,
+            user_id,
+            workspace_id,
+            req.name.trim(),
+            position,
+        )
+        .await
+        .map_err(group_write_error)
+    }
+
+    async fn group_for_editor(&self, user_id: Uuid, id: Uuid) -> AppResult<()> {
+        let workspace_id = repo::group_workspace(&self.state.db, id)
+            .await?
+            .ok_or(AppError::NotFound("connection group"))?;
+        authz::workspace_role(self.state, user_id, workspace_id)
             .await
-            .map_err(group_write_error)
+            .map_err(|_| AppError::NotFound("connection group"))?;
+        authz::require_role(self.state, user_id, workspace_id, Role::Editor).await?;
+        Ok(())
     }
 
     pub async fn update_group(
@@ -366,7 +516,8 @@ impl<'a> ConnectionService<'a> {
         id: Uuid,
         req: &ConnectionGroupRequest,
     ) -> AppResult<ConnectionGroup> {
-        repo::update_group(self.db, user_id, id, req.name.trim(), req.position)
+        self.group_for_editor(user_id, id).await?;
+        repo::update_group(&self.state.db, id, req.name.trim(), req.position)
             .await
             .map_err(group_write_error)?
             .ok_or(AppError::NotFound("connection group"))
@@ -374,7 +525,8 @@ impl<'a> ConnectionService<'a> {
 
     /// Deletes a group; its connections become ungrouped.
     pub async fn delete_group(&self, user_id: Uuid, id: Uuid) -> AppResult<()> {
-        if repo::delete_group(self.db, user_id, id).await? {
+        self.group_for_editor(user_id, id).await?;
+        if repo::delete_group(&self.state.db, id).await? {
             Ok(())
         } else {
             Err(AppError::NotFound("connection group"))
@@ -383,7 +535,7 @@ impl<'a> ConnectionService<'a> {
 }
 
 /// Unique-name conflicts get a specific message; a foreign key violation
-/// means the group does not exist for this user and is reported as 404.
+/// means the group is not in the connection's workspace (404).
 fn write_error(err: sqlx::Error) -> AppError {
     match sqlstate(&err).as_deref() {
         Some("23505") => AppError::Conflict("a connection with this name already exists".into()),

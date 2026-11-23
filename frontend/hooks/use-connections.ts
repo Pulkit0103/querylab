@@ -23,12 +23,17 @@ export const connectionKeys = {
   groups: ["connection-groups"] as const,
 };
 
+/** Connections of the active workspace (all visible ones until it is known). */
 export function useConnections() {
-  return useQuery<Connection[], ApiError>({
+  const workspaceId = useWorkspaceStore((s) => s.activeWorkspaceId);
+  return useQuery<Connection[], ApiError, Connection[]>({
     queryKey: connectionKeys.all,
     queryFn: ({ signal }) => api.get<Connection[]>("/api/connections", { signal }),
+    select: (list) => (workspaceId ? list.filter((c) => c.workspace_id === workspaceId) : list),
   });
 }
+
+const activeWorkspace = () => useWorkspaceStore.getState().activeWorkspaceId ?? undefined;
 
 /**
  * The connection the workspace operates on. Falls back to the first
@@ -52,7 +57,7 @@ export function useCreateConnection() {
   const qc = useQueryClient();
   const setActive = useWorkspaceStore((s) => s.setActiveConnection);
   return useMutation<Connection, ApiError, ConnectionInput>({
-    mutationFn: (body) => api.post<Connection>("/api/connections", body),
+    mutationFn: (body) => api.post<Connection>("/api/connections", { workspace_id: activeWorkspace(), ...body }),
     onSuccess: (created) => {
       qc.setQueryData<Connection[]>(connectionKeys.all, (old) =>
         [...(old ?? []), created].sort((a, b) => a.name.localeCompare(b.name)),
@@ -136,16 +141,18 @@ export function useDuplicateConnection() {
 // -- groups -----------------------------------------------------------------
 
 export function useConnectionGroups() {
+  const workspaceId = useWorkspaceStore((s) => s.activeWorkspaceId);
   return useQuery<ConnectionGroup[], ApiError>({
-    queryKey: connectionKeys.groups,
-    queryFn: ({ signal }) => api.get<ConnectionGroup[]>("/api/connection-groups", { signal }),
+    queryKey: [...connectionKeys.groups, workspaceId],
+    queryFn: ({ signal }) =>
+      api.get<ConnectionGroup[]>("/api/connection-groups", { signal, query: { workspace_id: workspaceId ?? undefined } }),
   });
 }
 
 export function useCreateGroup() {
   const qc = useQueryClient();
   return useMutation<ConnectionGroup, ApiError, { name: string }>({
-    mutationFn: (body) => api.post<ConnectionGroup>("/api/connection-groups", body),
+    mutationFn: (body) => api.post<ConnectionGroup>("/api/connection-groups", { workspace_id: activeWorkspace(), ...body }),
     onSuccess: () => void qc.invalidateQueries({ queryKey: connectionKeys.groups }),
   });
 }

@@ -9,6 +9,8 @@ use crate::{
         CreatePlanRequest, FingerprintStats, FingerprintTimeline, PerformanceQuery, SavedPlan,
         SavedPlanSummary, MAX_SAVED_PLANS,
     },
+    models::workspaces::Access,
+    services::authz,
     state::AppState,
     utils::fingerprint::normalize,
 };
@@ -86,6 +88,11 @@ impl<'a> PerformanceService<'a> {
 
     pub async fn save_plan(&self, user_id: Uuid, req: &CreatePlanRequest) -> AppResult<SavedPlan> {
         let db = &self.state.db;
+        // Plans are personal but may point at a shared connection: the user
+        // must be able to use it (404 otherwise, like any unknown id).
+        if let Some(connection_id) = req.connection_id {
+            authz::connection(self.state, user_id, connection_id, Access::Read).await?;
+        }
         if repo::count_plans(db, user_id).await? >= MAX_SAVED_PLANS {
             return Err(AppError::Conflict(format!(
                 "at most {MAX_SAVED_PLANS} plans can be saved; delete some first"
@@ -104,7 +111,7 @@ impl<'a> PerformanceService<'a> {
         )
         .await
         .map_err(|e| match &e {
-            // The connection belongs to someone else or no longer exists.
+            // The connection was deleted between the check and the write.
             sqlx::Error::Database(db) if db.is_foreign_key_violation() => {
                 AppError::NotFound("connection")
             }

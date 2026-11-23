@@ -14,6 +14,7 @@ import {
   Search,
   ShieldCheck,
   Trash2,
+  UserCog,
 } from "lucide-react";
 import { toast } from "sonner";
 
@@ -44,6 +45,8 @@ import {
 import { Input } from "@/components/ui/input";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Skeleton } from "@/components/ui/skeleton";
+import { ConnectionAccessDialog } from "@/components/workspaces/connection-access-dialog";
+import { useActiveWorkspace } from "@/hooks/use-workspaces";
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
 import {
   useConnectionGroups,
@@ -120,6 +123,9 @@ function ConnectionRow({
   const reconnect = useReconnect();
   const duplicate = useDuplicateConnection();
   const update = useUpdateConnection();
+  const { workspace } = useActiveWorkspace();
+  const [sharing, setSharing] = useState(false);
+  const manage = connection.access === "admin";
 
   const moveTo = (groupId: string | null) =>
     update.mutate(
@@ -144,6 +150,11 @@ function ConnectionRow({
         <p className="flex items-center gap-2 truncate text-sm font-medium">
           <span className="truncate">{connection.name}</span>
           <EnvironmentBadge environment={connection.environment} />
+          {!manage && (
+            <Badge variant="outline" className="text-[10px] text-muted-foreground">
+              {connection.access === "write" ? "read & write access" : "read access"}
+            </Badge>
+          )}
           {connection.read_only ? (
             <Badge variant="outline" className="gap-1 border-success/30 text-[10px] text-success">
               <ShieldCheck className="size-3" /> read-only
@@ -182,9 +193,16 @@ function ConnectionRow({
             <MoreHorizontal className="size-3.5" />
           </DropdownMenuTrigger>
           <DropdownMenuContent align="end" className="w-48">
+            {manage && (
+            <>
             <DropdownMenuItem onClick={() => openDialog(connection)}>
               <Pencil /> Edit
             </DropdownMenuItem>
+            {workspace && !workspace.personal && (
+              <DropdownMenuItem onClick={() => setSharing(true)}>
+                <UserCog /> Access
+              </DropdownMenuItem>
+            )}
             <DropdownMenuItem
               onClick={() =>
                 duplicate.mutate(connection.id, {
@@ -214,8 +232,12 @@ function ConnectionRow({
             <DropdownMenuItem variant="destructive" onClick={onDelete}>
               <Trash2 /> Delete
             </DropdownMenuItem>
+            </>
+            )}
+            {!manage && <DropdownMenuItem disabled>Only connection admins can change it</DropdownMenuItem>}
           </DropdownMenuContent>
         </DropdownMenu>
+        <ConnectionAccessDialog connection={sharing ? connection : null} onClose={() => setSharing(false)} />
       </div>
     </li>
   );

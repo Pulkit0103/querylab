@@ -6,13 +6,17 @@ use sqlx::PgConnection;
 use uuid::Uuid;
 
 use crate::{
-    database::{connections as connections_repo, diagrams as repo},
+    database::diagrams as repo,
     errors::{AppError, AppResult},
-    models::diagram::{
-        fk_action, infer_cardinality, is_optional, pick_tables, Candidate, DiagramLayout,
-        GraphColumn, GraphEdge, GraphTable, LayoutResponse, SchemaGraph,
+    models::{
+        diagram::{
+            fk_action, infer_cardinality, is_optional, pick_tables, Candidate, DiagramLayout,
+            GraphColumn, GraphEdge, GraphTable, LayoutResponse, SchemaGraph,
+        },
+        workspaces::Access,
     },
     services::{
+        authz,
         schema::{close, SchemaService, RELKIND_LABEL},
         target_db,
     },
@@ -330,11 +334,16 @@ impl<'a> DiagramService<'a> {
         Self { state }
     }
 
-    async fn ensure_owned(&self, user_id: Uuid, connection_id: Uuid) -> AppResult<()> {
-        connections_repo::find_for_user(&self.state.db, user_id, connection_id)
-            .await?
-            .map(|_| ())
-            .ok_or(AppError::NotFound("connection"))
+    /// Layouts are shared by everyone who can see the connection; saving or
+    /// resetting one needs write access.
+    async fn ensure_access(
+        &self,
+        user_id: Uuid,
+        connection_id: Uuid,
+        need: Access,
+    ) -> AppResult<()> {
+        authz::connection(self.state, user_id, connection_id, need).await?;
+        Ok(())
     }
 
     pub async fn layout(
@@ -343,9 +352,10 @@ impl<'a> DiagramService<'a> {
         connection_id: Uuid,
         schema: &str,
     ) -> AppResult<LayoutResponse> {
-        self.ensure_owned(user_id, connection_id).await?;
+        self.ensure_access(user_id, connection_id, Access::Read)
+            .await?;
         Ok(
-            match repo::get_layout(&self.state.db, user_id, connection_id, schema).await? {
+            match repo::get_layout(&self.state.db, connection_id, schema).await? {
                 Some((positions, updated_at)) => LayoutResponse {
                     positions,
                     updated_at: Some(updated_at),
@@ -365,7 +375,8 @@ impl<'a> DiagramService<'a> {
         schema: &str,
         layout: DiagramLayout,
     ) -> AppResult<LayoutResponse> {
-        self.ensure_owned(user_id, connection_id).await?;
+        self.ensure_access(user_id, connection_id, Access::Write)
+            .await?;
         let updated_at = repo::put_layout(
             &self.state.db,
             user_id,
@@ -394,8 +405,9 @@ impl<'a> DiagramService<'a> {
         connection_id: Uuid,
         schema: &str,
     ) -> AppResult<()> {
-        self.ensure_owned(user_id, connection_id).await?;
-        repo::delete_layout(&self.state.db, user_id, connection_id, schema).await?;
+        self.ensure_access(user_id, connection_id, Access::Write)
+            .await?;
+        repo::delete_layout(&self.state.db, connection_id, schema).await?;
         Ok(())
     }
 }

@@ -24,6 +24,7 @@ use crate::{
             SchemaSize, Session, Signal, SignalResponse, SizesResponse, TableSize,
             TopQueriesResponse, TopQueriesSort, TopQuery,
         },
+        workspaces::Access,
     },
     services::{
         connections::ConnectionService,
@@ -246,8 +247,9 @@ impl<'a> MonitoringService<'a> {
         confirm: Option<&str>,
     ) -> AppResult<SignalResponse> {
         let record = ConnectionService::new(self.state)
-            .get_record(user_id, connection_id)
-            .await?;
+            .require(user_id, connection_id, Access::Write)
+            .await?
+            .record;
         if record.read_only {
             return Err(AppError::Forbidden(READ_ONLY_CONNECTION.into()));
         }

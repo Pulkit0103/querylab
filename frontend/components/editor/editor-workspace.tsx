@@ -21,6 +21,7 @@ import { EditorTabs } from "./editor-tabs";
 import { EditorToolbar } from "./editor-toolbar";
 import { ExplainMenu } from "./explain-analyze";
 import { SaveQueryDialog } from "./save-query-dialog";
+import { SnippetsButton } from "./snippets-dialog";
 import { setCompletionCatalog } from "./sql-completion";
 import { SqlEditor, type SqlEditorHandle } from "./sql-editor";
 
@@ -180,6 +181,31 @@ export function EditorWorkspace() {
   );
   const explain = useCallback(() => explainTarget(currentTarget(), false), [currentTarget, explainTarget]);
 
+  /** Selected text, for saving it as a snippet. */
+  const selectedText = useCallback(() => {
+    const editor = handle?.editor;
+    const model = editor?.getModel();
+    const selection = editor?.getSelection();
+    return model && selection && !selection.isEmpty() ? model.getValueInRange(selection) : "";
+  }, [handle]);
+
+  /** Inserts text at the cursor (replacing the selection), undoably. */
+  const insertText = useCallback(
+    (text: string) => {
+      const editor = handle?.editor;
+      const selection = editor?.getSelection();
+      if (!editor || !selection) {
+        updateSql(activeTab.id, activeTab.sql + text);
+        return;
+      }
+      editor.pushUndoStop();
+      editor.executeEdits("snippet", [{ range: selection, text, forceMoveMarkers: true }]);
+      editor.pushUndoStop();
+      editor.focus();
+    },
+    [handle, activeTab.id, activeTab.sql, updateSql],
+  );
+
   const editorArea = (
     <ResizablePanelGroup orientation="vertical">
       <ResizablePanel defaultSize="58%" minSize="20%">
@@ -196,11 +222,14 @@ export function EditorWorkspace() {
             onCopy={copy}
             onClear={clear}
             explainExtra={
-              <ExplainMenu
-                disabled={exec.status === "running" || activeTab.sql.trim().length === 0}
-                getTarget={currentTarget}
-                onExplain={explainTarget}
-              />
+              <>
+                <ExplainMenu
+                  disabled={exec.status === "running" || activeTab.sql.trim().length === 0}
+                  getTarget={currentTarget}
+                  onExplain={explainTarget}
+                />
+                <SnippetsButton getSelection={selectedText} onInsert={insertText} />
+              </>
             }
           />
           <div className="min-h-0 flex-1">

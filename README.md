@@ -170,6 +170,51 @@ back to sign in.
     in production, the log in development. Without a provider the feature is
     off and the login page hides the link.
 
+## Team workspaces and permissions
+
+Everyone has a **personal workspace**; **team workspaces** share connections,
+connection groups, saved queries, folders and snippets. The sidebar switcher
+chooses the workspace the app shows; **Team Workspace** (`/team`) manages
+it.
+
+- **Roles:**
+
+  | Role | Can do |
+  | --- | --- |
+  | Viewer | Browse and run read-only statements, export, read saved queries and snippets |
+  | Editor | Also run writes, apply changes, import, generate data, run migrations; create connections, queries, folders and snippets |
+  | Admin | Also manage members, invitations and every connection |
+  | Owner | Also manage owners and delete the workspace (a workspace keeps at least one owner) |
+
+- **Connection access:** without a grant, access follows the role: viewers
+  read, editors write, admins and owners manage. Per-connection grants
+  (`none`, `read`, `write`, `admin`) adjust that for one member, for example
+  to hide a production database from some editors. Viewers never get more
+  than `read`, and whoever creates a connection manages it.
+  - Writes need both the member's write access and a read-write connection.
+    Members with read access always run inside `BEGIN READ ONLY`, even on a
+    read-write connection.
+  - Members use shared connections without ever seeing the credentials: no
+    endpoint returns them. Credentials stay encrypted and bound to the
+    connection's creator.
+- **Invitations:** admins invite by email and role. The link works once,
+  for 7 days, and only for an account with that email address. It is
+  emailed when an email provider is configured, and can always be copied.
+- **Isolation:** resources of a workspace the user is not a member of answer
+  `404`, never `403`, so ids cannot be probed. Query history, saved plans,
+  migration projects and data jobs stay personal, even on shared
+  connections.
+- **Snippets:** reusable SQL with `{{placeholders}}`. **Snippets** in the
+  editor asks for each value and inserts the result at the cursor; a
+  selection can be saved as a new snippet.
+- **Audit:** role changes, membership changes, invitations and grant changes
+  are audit events. Workspace admins see every event of their workspace in
+  **Audit Logs**; others see their own.
+- **Enforcement:** one authorization module (`services/authz.rs`) computes
+  membership and effective access, and every connection, library, data and
+  workspace endpoint goes through it. `tests/workspaces_api.rs` checks the
+  permission matrix (role × grant × action) end to end.
+
 ## Connecting to user databases
 
 Each operation against a user's database opens a **dedicated, short-lived
@@ -693,11 +738,22 @@ and lists past jobs.
 | POST   | `/api/auth/password-reset` | `{email}` → `202` (emails a link if the account exists) |
 | GET    | `/api/auth/password-reset?token=` | Whether a reset link is valid    |
 | POST   | `/api/auth/password-reset/confirm` | `{token, new_password}`; signs out every session |
+| GET/POST | `/api/workspaces` | List the user's workspaces (personal first) / create a team workspace |
+| GET/PUT/DELETE | `/api/workspaces/{id}` | Workspace (any member) / rename (admin) / delete (owner, not personal) |
+| GET    | `/api/workspaces/{id}/members` | Members and roles |
+| PUT/DELETE | `/api/workspaces/{id}/members/{user_id}` | Change a role (`{role}`) / remove a member or leave |
+| GET/POST | `/api/workspaces/{id}/invitations` | Pending invitations / invite `{email, role}` → `{invitation, link, emailed}` |
+| DELETE | `/api/workspaces/{id}/invitations/{invitation_id}` | Revoke an invitation |
+| GET/POST | `/api/invitations/{token}[/accept]` | Preview / accept (signed in with the invited email) |
+| GET    | `/api/connections/{id}/grants` | Members with their grant and effective access (connection admins) |
+| PUT    | `/api/connections/{id}/grants/{user_id}` | `{access: none\|read\|write\|admin\|null}` (`null` = role default) |
+| GET/POST | `/api/snippets?workspace_id=` | List / create snippets `{workspace_id?, name, description?, body, tags}` |
+| GET/PUT/DELETE | `/api/snippets/{id}` | One snippet (editors and above change it) |
 | GET    | `/api/audit-events?action=&actor=&connection_id=&from=&to=&before=&limit=` | Audit events (keyset paginated; `action` ending in `.` matches a prefix) |
 | GET    | `/api/audit-events/export?…` | Same filters as CSV (up to 50,000 rows) |
 | GET    | `/metrics`           | Prometheus metrics (`Authorization: Bearer $METRICS_TOKEN`) |
-| GET    | `/api/connections`        | List the user's connections (no secrets) |
-| POST   | `/api/connections`        | Create a connection (password encrypted) |
+| GET    | `/api/connections?workspace_id=` | Connections the user can see, with their `access` (no secrets) |
+| POST   | `/api/connections`        | Create a connection in `workspace_id` (default personal; password encrypted) |
 | GET    | `/api/connections/{id}`   | Get a connection                         |
 | PUT    | `/api/connections/{id}`   | Update; omit `password` to keep it       |
 | DELETE | `/api/connections/{id}`   | Delete a connection                      |

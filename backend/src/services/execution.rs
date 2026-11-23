@@ -25,7 +25,10 @@ use uuid::Uuid;
 
 use crate::{
     errors::{AppError, AppResult},
-    models::query::{ColumnMeta, ExecuteRequest, ExplainRequest, ExplainResult, QueryResult},
+    models::{
+        query::{ColumnMeta, ExecuteRequest, ExplainRequest, ExplainResult, QueryResult},
+        workspaces::Access,
+    },
     services::{
         auth::AuthUser,
         connections::ConnectionService,
@@ -246,7 +249,13 @@ async fn open_registered(
 ) -> AppResult<(PgConnection, bool, ExecutionGuard)> {
     state.query_limiter.check(&user.user_id.to_string())?;
     let service = ConnectionService::new(state);
-    let record = service.get_record(user.user_id, connection_id).await?;
+    let access = service
+        .require(user.user_id, connection_id, Access::Read)
+        .await?;
+    // Members without write access always run read-only, whatever the
+    // connection's own setting.
+    let force_read_only = force_read_only || access.access < Access::Write;
+    let record = access.record;
     let guard = state.executions.register(
         execution_id,
         user.user_id,

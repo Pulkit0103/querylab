@@ -232,24 +232,27 @@ pub enum FolderRejection {
     TooDeep,
 }
 
-pub async fn list_collections(db: &PgPool, user_id: Uuid) -> Result<Vec<Collection>, sqlx::Error> {
+pub async fn list_collections(
+    db: &PgPool,
+    workspace_id: Uuid,
+) -> Result<Vec<Collection>, sqlx::Error> {
     sqlx::query_as(&format!(
-        "{COLLECTION_SELECT} WHERE c.user_id = $1 ORDER BY lower(c.name), c.id"
+        "{COLLECTION_SELECT} WHERE c.workspace_id = $1 ORDER BY lower(c.name), c.id"
     ))
-    .bind(user_id)
+    .bind(workspace_id)
     .fetch_all(db)
     .await
 }
 
 async fn get_collection(
     tx: &mut Transaction<'_, Postgres>,
-    user_id: Uuid,
+    workspace_id: Uuid,
     id: Uuid,
 ) -> Result<Option<Collection>, sqlx::Error> {
     sqlx::query_as(&format!(
-        "{COLLECTION_SELECT} WHERE c.user_id = $1 AND c.id = $2"
+        "{COLLECTION_SELECT} WHERE c.workspace_id = $1 AND c.id = $2"
     ))
-    .bind(user_id)
+    .bind(workspace_id)
     .bind(id)
     .fetch_optional(&mut **tx)
     .await
@@ -259,10 +262,10 @@ async fn get_collection(
 /// into a cycle.
 async fn lock_folders(
     tx: &mut Transaction<'_, Postgres>,
-    user_id: Uuid,
+    workspace_id: Uuid,
 ) -> Result<(), sqlx::Error> {
-    sqlx::query("SELECT id FROM query_collections WHERE user_id = $1 FOR UPDATE")
-        .bind(user_id)
+    sqlx::query("SELECT id FROM query_collections WHERE workspace_id = $1 FOR UPDATE")
+        .bind(workspace_id)
         .execute(&mut **tx)
         .await?;
     Ok(())
@@ -271,19 +274,19 @@ async fn lock_folders(
 /// Depth of a folder (top level = 1), or `None` if it does not exist.
 async fn folder_depth(
     tx: &mut Transaction<'_, Postgres>,
-    user_id: Uuid,
+    workspace_id: Uuid,
     id: Uuid,
 ) -> Result<Option<i32>, sqlx::Error> {
     sqlx::query_scalar(
         "WITH RECURSIVE up AS ( \
-             SELECT id, parent_id, 1 AS depth FROM query_collections WHERE id = $2 AND user_id = $1 \
+             SELECT id, parent_id, 1 AS depth FROM query_collections WHERE id = $2 AND workspace_id = $1 \
              UNION ALL \
              SELECT c.id, c.parent_id, up.depth + 1 FROM query_collections c \
              JOIN up ON c.id = up.parent_id \
              WHERE up.depth < 100 \
          ) SELECT max(depth) FROM up",
     )
-    .bind(user_id)
+    .bind(workspace_id)
     .bind(id)
     .fetch_one(&mut **tx)
     .await
@@ -292,19 +295,19 @@ async fn folder_depth(
 /// A folder and all its descendants, with the height of the subtree.
 async fn folder_subtree(
     tx: &mut Transaction<'_, Postgres>,
-    user_id: Uuid,
+    workspace_id: Uuid,
     id: Uuid,
 ) -> Result<(Vec<Uuid>, i32), sqlx::Error> {
     let rows: Vec<(Uuid, i32)> = sqlx::query_as(
         "WITH RECURSIVE down AS ( \
-             SELECT id, 1 AS level FROM query_collections WHERE id = $2 AND user_id = $1 \
+             SELECT id, 1 AS level FROM query_collections WHERE id = $2 AND workspace_id = $1 \
              UNION ALL \
              SELECT c.id, down.level + 1 FROM query_collections c \
              JOIN down ON c.parent_id = down.id \
              WHERE down.level < 100 \
          ) SELECT id, level FROM down",
     )
-    .bind(user_id)
+    .bind(workspace_id)
     .bind(id)
     .fetch_all(&mut **tx)
     .await?;
@@ -315,13 +318,14 @@ async fn folder_subtree(
 pub async fn insert_collection(
     db: &PgPool,
     user_id: Uuid,
+    workspace_id: Uuid,
     name: &str,
     parent_id: Option<Uuid>,
 ) -> Result<Result<Collection, FolderRejection>, sqlx::Error> {
     let mut tx = db.begin().await?;
-    lock_folders(&mut tx, user_id).await?;
+    lock_folders(&mut tx, workspace_id).await?;
     if let Some(parent) = parent_id {
-        match folder_depth(&mut tx, user_id, parent).await? {
+        match folder_depth(&mut tx, workspace_id, parent).await? {
             None => return Ok(Err(FolderRejection::ParentNotFound)),
             Some(depth) if depth + 1 > MAX_FOLDER_DEPTH => {
                 return Ok(Err(FolderRejection::TooDeep))
@@ -331,15 +335,16 @@ pub async fn insert_collection(
     }
     let id = Uuid::new_v4();
     sqlx::query(
-        "INSERT INTO query_collections (id, user_id, name, parent_id) VALUES ($1, $2, $3, $4)",
+        "INSERT INTO query_collections (id, user_id, workspace_id, name, parent_id) VALUES ($1, $2, $3, $4, $5)",
     )
     .bind(id)
     .bind(user_id)
+    .bind(workspace_id)
     .bind(name)
     .bind(parent_id)
     .execute(&mut *tx)
     .await?;
-    let created = get_collection(&mut tx, user_id, id)
+    let created = get_collection(&mut tx, workspace_id, id)
         .await?
         .ok_or(sqlx::Error::RowNotFound)?;
     tx.commit().await?;
@@ -350,14 +355,14 @@ pub async fn insert_collection(
 /// top level and `None` to keep the current parent.
 pub async fn update_collection(
     db: &PgPool,
-    user_id: Uuid,
+    workspace_id: Uuid,
     id: Uuid,
     name: Option<&str>,
     parent: Option<Option<Uuid>>,
 ) -> Result<Result<Collection, FolderRejection>, sqlx::Error> {
     let mut tx = db.begin().await?;
-    lock_folders(&mut tx, user_id).await?;
-    let (subtree, height) = folder_subtree(&mut tx, user_id, id).await?;
+    lock_folders(&mut tx, workspace_id).await?;
+    let (subtree, height) = folder_subtree(&mut tx, workspace_id, id).await?;
     if subtree.is_empty() {
         return Ok(Err(FolderRejection::NotFound));
     }
@@ -365,7 +370,7 @@ pub async fn update_collection(
         if subtree.contains(&new_parent) {
             return Ok(Err(FolderRejection::Cycle));
         }
-        match folder_depth(&mut tx, user_id, new_parent).await? {
+        match folder_depth(&mut tx, workspace_id, new_parent).await? {
             None => return Ok(Err(FolderRejection::ParentNotFound)),
             Some(depth) if depth + height > MAX_FOLDER_DEPTH => {
                 return Ok(Err(FolderRejection::TooDeep))
@@ -377,27 +382,47 @@ pub async fn update_collection(
         "UPDATE query_collections \
          SET name = COALESCE($3, name), \
              parent_id = CASE WHEN $4 THEN $5 ELSE parent_id END \
-         WHERE id = $1 AND user_id = $2",
+         WHERE id = $1 AND workspace_id = $2",
     )
     .bind(id)
-    .bind(user_id)
+    .bind(workspace_id)
     .bind(name)
     .bind(parent.is_some())
     .bind(parent.flatten())
     .execute(&mut *tx)
     .await?;
-    let updated = get_collection(&mut tx, user_id, id)
+    let updated = get_collection(&mut tx, workspace_id, id)
         .await?
         .ok_or(sqlx::Error::RowNotFound)?;
     tx.commit().await?;
     Ok(Ok(updated))
 }
 
-pub async fn delete_collection(db: &PgPool, user_id: Uuid, id: Uuid) -> Result<bool, sqlx::Error> {
+/// The workspace of a folder.
+pub async fn collection_workspace(db: &PgPool, id: Uuid) -> Result<Option<Uuid>, sqlx::Error> {
+    sqlx::query_scalar("SELECT workspace_id FROM query_collections WHERE id = $1")
+        .bind(id)
+        .fetch_optional(db)
+        .await
+}
+
+/// The workspace of a saved query.
+pub async fn saved_workspace(db: &PgPool, id: Uuid) -> Result<Option<Uuid>, sqlx::Error> {
+    sqlx::query_scalar("SELECT workspace_id FROM saved_queries WHERE id = $1")
+        .bind(id)
+        .fetch_optional(db)
+        .await
+}
+
+pub async fn delete_collection(
+    db: &PgPool,
+    workspace_id: Uuid,
+    id: Uuid,
+) -> Result<bool, sqlx::Error> {
     Ok(
-        sqlx::query("DELETE FROM query_collections WHERE id = $1 AND user_id = $2")
+        sqlx::query("DELETE FROM query_collections WHERE id = $1 AND workspace_id = $2")
             .bind(id)
-            .bind(user_id)
+            .bind(workspace_id)
             .execute(db)
             .await?
             .rows_affected()
@@ -409,12 +434,15 @@ pub async fn delete_collection(db: &PgPool, user_id: Uuid, id: Uuid) -> Result<b
 // Saved queries
 // ---------------------------------------------------------------------------
 
-const SAVED_COLUMNS: &str = "id, name, description, sql_content, connection_id, collection_id, \
-     created_at, updated_at, pinned, tags";
+const SAVED_COLUMNS: &str =
+    "id, workspace_id, user_id AS created_by, name, description, sql_content, \
+     connection_id, collection_id, created_at, updated_at, pinned, tags";
 
 pub struct SavedQueryRow<'a> {
     pub id: Uuid,
+    /// Creator (insert only).
     pub user_id: Uuid,
+    pub workspace_id: Uuid,
     pub name: &'a str,
     pub description: Option<&'a str>,
     pub sql_content: &'a str,
@@ -434,12 +462,12 @@ pub struct SavedFilter<'a> {
 
 pub async fn list_saved(
     db: &PgPool,
-    user_id: Uuid,
+    workspace_id: Uuid,
     f: &SavedFilter<'_>,
 ) -> Result<Vec<SavedQuery>, sqlx::Error> {
     sqlx::query_as(&format!(
         "SELECT {SAVED_COLUMNS} FROM saved_queries \
-         WHERE user_id = $1 \
+         WHERE workspace_id = $1 \
            AND ($2::uuid IS NULL OR collection_id = $2) \
            AND ($3::text IS NULL OR name ILIKE $3 OR description ILIKE $3 OR sql_content ILIKE $3) \
            AND (cardinality($4::text[]) = 0 OR tags @> $4) \
@@ -447,7 +475,7 @@ pub async fn list_saved(
          ORDER BY pinned DESC, updated_at DESC \
          LIMIT 1000"
     ))
-    .bind(user_id)
+    .bind(workspace_id)
     .bind(f.collection_id)
     .bind(f.search.map(like_pattern))
     .bind(f.tags)
@@ -458,22 +486,22 @@ pub async fn list_saved(
 
 pub async fn get_saved(
     db: &PgPool,
-    user_id: Uuid,
+    workspace_id: Uuid,
     id: Uuid,
 ) -> Result<Option<SavedQuery>, sqlx::Error> {
     sqlx::query_as(&format!(
-        "SELECT {SAVED_COLUMNS} FROM saved_queries WHERE id = $1 AND user_id = $2"
+        "SELECT {SAVED_COLUMNS} FROM saved_queries WHERE id = $1 AND workspace_id = $2"
     ))
     .bind(id)
-    .bind(user_id)
+    .bind(workspace_id)
     .fetch_optional(db)
     .await
 }
 
 pub async fn insert_saved(db: &PgPool, q: &SavedQueryRow<'_>) -> Result<SavedQuery, sqlx::Error> {
     sqlx::query_as(&format!(
-        "INSERT INTO saved_queries (id, user_id, name, description, sql_content, connection_id, collection_id, tags) \
-         VALUES ($1, $2, $3, $4, $5, $6, $7, $8) RETURNING {SAVED_COLUMNS}"
+        "INSERT INTO saved_queries (id, user_id, workspace_id, name, description, sql_content, connection_id, collection_id, tags) \
+         VALUES ($1, $2, $9, $3, $4, $5, $6, $7, $8) RETURNING {SAVED_COLUMNS}"
     ))
     .bind(q.id)
     .bind(q.user_id)
@@ -483,6 +511,7 @@ pub async fn insert_saved(db: &PgPool, q: &SavedQueryRow<'_>) -> Result<SavedQue
     .bind(q.connection_id)
     .bind(q.collection_id)
     .bind(q.tags)
+    .bind(q.workspace_id)
     .fetch_one(db)
     .await
 }
@@ -494,10 +523,10 @@ pub async fn update_saved(
     sqlx::query_as(&format!(
         "UPDATE saved_queries SET name = $3, description = $4, sql_content = $5, \
             connection_id = $6, collection_id = $7, tags = $8 \
-         WHERE id = $1 AND user_id = $2 RETURNING {SAVED_COLUMNS}"
+         WHERE id = $1 AND workspace_id = $2 RETURNING {SAVED_COLUMNS}"
     ))
     .bind(q.id)
-    .bind(q.user_id)
+    .bind(q.workspace_id)
     .bind(q.name)
     .bind(q.description)
     .bind(q.sql_content)
@@ -510,27 +539,27 @@ pub async fn update_saved(
 
 pub async fn set_saved_pinned(
     db: &PgPool,
-    user_id: Uuid,
+    workspace_id: Uuid,
     id: Uuid,
     pinned: bool,
 ) -> Result<Option<SavedQuery>, sqlx::Error> {
     // The touch trigger leaves `updated_at` alone: pinning is not an edit.
     sqlx::query_as(&format!(
         "UPDATE saved_queries SET pinned = $3 \
-         WHERE id = $1 AND user_id = $2 RETURNING {SAVED_COLUMNS}"
+         WHERE id = $1 AND workspace_id = $2 RETURNING {SAVED_COLUMNS}"
     ))
     .bind(id)
-    .bind(user_id)
+    .bind(workspace_id)
     .bind(pinned)
     .fetch_optional(db)
     .await
 }
 
-pub async fn delete_saved(db: &PgPool, user_id: Uuid, id: Uuid) -> Result<bool, sqlx::Error> {
+pub async fn delete_saved(db: &PgPool, workspace_id: Uuid, id: Uuid) -> Result<bool, sqlx::Error> {
     Ok(
-        sqlx::query("DELETE FROM saved_queries WHERE id = $1 AND user_id = $2")
+        sqlx::query("DELETE FROM saved_queries WHERE id = $1 AND workspace_id = $2")
             .bind(id)
-            .bind(user_id)
+            .bind(workspace_id)
             .execute(db)
             .await?
             .rows_affected()
@@ -538,15 +567,15 @@ pub async fn delete_saved(db: &PgPool, user_id: Uuid, id: Uuid) -> Result<bool, 
     )
 }
 
-pub async fn list_tags(db: &PgPool, user_id: Uuid) -> Result<Vec<TagCount>, sqlx::Error> {
+pub async fn list_tags(db: &PgPool, workspace_id: Uuid) -> Result<Vec<TagCount>, sqlx::Error> {
     sqlx::query_as(
         "SELECT t AS tag, count(*)::bigint AS count \
          FROM saved_queries, unnest(tags) AS t \
-         WHERE user_id = $1 \
+         WHERE workspace_id = $1 \
          GROUP BY t ORDER BY count(*) DESC, t \
          LIMIT 500",
     )
-    .bind(user_id)
+    .bind(workspace_id)
     .fetch_all(db)
     .await
 }
@@ -566,8 +595,10 @@ pub async fn stats_totals(
                 count(*) FILTER (WHERE status <> 'success')::bigint AS failed, \
                 avg(execution_time_ms)::float8 AS avg_execution_ms, \
                 percentile_cont(0.95) WITHIN GROUP (ORDER BY execution_time_ms)::float8 AS p95_execution_ms, \
-                (SELECT count(*) FROM saved_queries WHERE user_id = $1)::bigint AS saved_queries, \
-                (SELECT count(*) FROM database_connections WHERE user_id = $1)::bigint AS connections \
+                (SELECT count(*) FROM saved_queries q JOIN workspace_members m \
+                   ON m.workspace_id = q.workspace_id AND m.user_id = $1)::bigint AS saved_queries, \
+                (SELECT count(*) FROM database_connections c JOIN workspace_members m \
+                   ON m.workspace_id = c.workspace_id AND m.user_id = $1)::bigint AS connections \
          FROM query_history \
          WHERE user_id = $1 AND executed_at >= now() - make_interval(days => $2)",
     )

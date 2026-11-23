@@ -91,6 +91,8 @@ describe("PinButton", () => {
 describe("quick open", () => {
   const saved = (id: string, name: string, pinned: boolean, tags: string[] = []): SavedQuery => ({
     id,
+    workspace_id: "w",
+    created_by: null,
     name,
     description: null,
     sql_content: `select ${id}`,

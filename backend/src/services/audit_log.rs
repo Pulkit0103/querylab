@@ -23,9 +23,14 @@ impl<'a> AuditLogService<'a> {
         Self { state }
     }
 
-    /// Workspaces whose events the user may read (administrators only).
-    async fn readable_workspaces(&self, _user_id: Uuid) -> AppResult<Vec<Uuid>> {
-        Ok(Vec::new())
+    /// Workspaces whose events the user may read: those they administer.
+    async fn readable_workspaces(&self, user_id: Uuid) -> AppResult<Vec<Uuid>> {
+        Ok(crate::database::workspaces::workspaces_with_roles(
+            &self.state.db,
+            user_id,
+            &["owner", "admin"],
+        )
+        .await?)
     }
 
     pub async fn page(&self, user: &AuthUser, q: &AuditQuery) -> AppResult<AuditPage> {

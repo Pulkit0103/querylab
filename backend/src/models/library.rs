@@ -166,6 +166,9 @@ pub struct CollectionRequest {
     pub name: String,
     #[serde(default)]
     pub parent_id: Option<Uuid>,
+    /// Workspace of the folder; the personal one by default.
+    #[serde(default)]
+    pub workspace_id: Option<Uuid>,
 }
 
 impl Validate for CollectionRequest {
@@ -255,6 +258,9 @@ pub struct TagCount {
 #[derive(Debug, Clone, Serialize, sqlx::FromRow)]
 pub struct SavedQuery {
     pub id: Uuid,
+    pub workspace_id: Uuid,
+    /// Creator; empty once their account is deleted.
+    pub created_by: Option<Uuid>,
     pub name: String,
     pub description: Option<String>,
     pub sql_content: String,
@@ -268,6 +274,9 @@ pub struct SavedQuery {
 
 #[derive(Debug, Deserialize)]
 pub struct CreateSavedQuery {
+    /// Workspace to save into; the personal one by default.
+    #[serde(default)]
+    pub workspace_id: Option<Uuid>,
     pub name: String,
     pub description: Option<String>,
     pub sql_content: String,
@@ -295,6 +304,7 @@ pub struct UpdateSavedQuery {
 
 #[derive(Debug, Deserialize, Default)]
 pub struct SavedQueryFilter {
+    pub workspace_id: Option<Uuid>,
     pub q: Option<String>,
     pub collection_id: Option<Uuid>,
     /// Comma-separated tags; a query must carry all of them.
@@ -437,6 +447,7 @@ mod tests {
         assert_eq!(normalize_tags(&tags), ["reports", "kpi"]);
 
         let create = |tags: Vec<String>| CreateSavedQuery {
+            workspace_id: None,
             name: "q".into(),
             description: None,
             sql_content: "select 1".into(),

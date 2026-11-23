@@ -5,6 +5,7 @@ import { usePathname } from "next/navigation";
 import { PanelLeftClose, PanelLeftOpen, X } from "lucide-react";
 
 import { Button } from "@/components/ui/button";
+import { WorkspaceSwitcher } from "@/components/workspaces/workspace-switcher";
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
 import { cn } from "@/lib/utils";
 import { useWorkspaceStore } from "@/stores/workspace-store";
@@ -70,6 +71,9 @@ export function AppSidebar() {
             <Logo collapsed={collapsed} />
           </Link>
         </div>
+        <div className={cn("pb-1", collapsed ? "px-2.5" : "px-2")}>
+          <WorkspaceSwitcher collapsed={collapsed} />
+        </div>
         <div className="flex-1 overflow-y-auto py-2 scrollbar-thin">
           <NavLinks collapsed={collapsed} />
         </div>
@@ -109,6 +113,9 @@ export function AppSidebar() {
               <Button variant="ghost" size="icon-sm" onClick={() => setMobileOpen(false)} aria-label="Close">
                 <X className="size-4" />
               </Button>
+            </div>
+            <div className="px-2 pb-1">
+              <WorkspaceSwitcher collapsed={false} />
             </div>
             <div className="flex-1 overflow-y-auto py-2">
               <NavLinks collapsed={false} onNavigate={() => setMobileOpen(false)} />

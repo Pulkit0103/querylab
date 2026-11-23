@@ -4,6 +4,8 @@ import type { Connection } from "@/types/api";
 export function conn(overrides: Partial<Connection>): Connection {
   return {
     id: "c",
+    workspace_id: "w",
+    access: "admin",
     name: "conn",
     database_type: "postgresql",
     host: "db.example.com",

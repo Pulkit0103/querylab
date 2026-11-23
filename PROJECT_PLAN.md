@@ -956,8 +956,15 @@ The API configuration also gets a new upload limit, `IMPORT_MAX_BYTES`
 
 **Goal:** a SaaS-ready platform.
 **Status:** ◐ in progress, delivered in three parts: 10a account security,
-audit log and operations (✅ delivered); 10b workspaces and permissions;
-10c shared limits and end-to-end tests.
+audit log and operations (✅ delivered); 10b workspaces and permissions
+(✅ delivered); 10c shared limits and end-to-end tests.
+
+> **Implementation notes (10b):**
+> - Workspace-owned: connections, connection groups, folders, saved queries and snippets. Personal (per user, possibly on shared connections): history, saved plans, migration projects, data jobs and settings. Diagram layouts are shared per connection (`user_id` is the last editor). The composite `(connection_id, user_id)` foreign keys of personal records became plain foreign keys, because members reference connections they did not create.
+> - Grants are `none | read | write | admin` (the plan's list plus `none`, to hide a connection from one member). Effective access is `min(grant or role default, role cap)`, with owners and admins always `admin` and viewers capped at `read`. Creators get an `admin` grant on connections they create.
+> - Credentials stay encrypted with the creator's id in the associated data, so no re-encryption is needed when connections are shared, edited by other admins or when the workspace changes hands.
+> - Invitations are bound to the invited email address. Without an email provider, admins share the returned link.
+> - Metrics or alerting per workspace, transferring a connection between workspaces, and workspace-level settings are not part of this phase.
 
 > **Implementation notes (10a):**
 > - TOTP is implemented directly (RFC 6238 with `hmac`/`sha1`, base32 included) and the enrolment QR code is rendered server-side as SVG (`qrcode`). Ten one-time recovery codes are stored as SHA-256 hashes. A login with 2FA returns `{two_factor_required, challenge}` (a 5-minute, 5-attempt token stored hashed) and is finished by `POST /api/auth/login/2fa`; the plan's `/2fa/verify` confirms enrolment.

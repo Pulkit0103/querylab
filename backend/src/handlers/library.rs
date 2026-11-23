@@ -4,10 +4,13 @@ use uuid::Uuid;
 
 use crate::{
     errors::AppResult,
-    models::library::{
-        Collection, CollectionRequest, CreateSavedQuery, HistoryEntry, HistoryPage, HistoryQuery,
-        PinRequest, SavedQuery, SavedQueryFilter, StatsQuery, StatsResponse, TagCount,
-        UpdateCollectionRequest, UpdateSavedQuery,
+    models::{
+        library::{
+            Collection, CollectionRequest, CreateSavedQuery, HistoryEntry, HistoryPage,
+            HistoryQuery, PinRequest, SavedQuery, SavedQueryFilter, StatsQuery, StatsResponse,
+            TagCount, UpdateCollectionRequest, UpdateSavedQuery,
+        },
+        workspaces::WorkspaceScope,
     },
     services::{auth::AuthUser, library::LibraryService},
     state::AppState,
@@ -85,10 +88,11 @@ pub async fn clear_history(
 pub async fn list_collections(
     State(state): State<AppState>,
     user: AuthUser,
+    ApiQuery(scope): ApiQuery<WorkspaceScope>,
 ) -> AppResult<Json<Vec<Collection>>> {
     Ok(Json(
         LibraryService::new(&state)
-            .collections(user.user_id)
+            .collections(user.user_id, scope.workspace_id)
             .await?,
     ))
 }
@@ -99,7 +103,7 @@ pub async fn create_collection(
     ValidatedJson(req): ValidatedJson<CollectionRequest>,
 ) -> AppResult<(StatusCode, Json<Collection>)> {
     let c = LibraryService::new(&state)
-        .create_collection(user.user_id, &req.name, req.parent_id)
+        .create_collection(user.user_id, req.workspace_id, &req.name, req.parent_id)
         .await?;
     Ok((StatusCode::CREATED, Json(c)))
 }
@@ -191,8 +195,16 @@ pub async fn pin_saved(
     ))
 }
 
-pub async fn tags(State(state): State<AppState>, user: AuthUser) -> AppResult<Json<Vec<TagCount>>> {
-    Ok(Json(LibraryService::new(&state).tags(user.user_id).await?))
+pub async fn tags(
+    State(state): State<AppState>,
+    user: AuthUser,
+    ApiQuery(scope): ApiQuery<WorkspaceScope>,
+) -> AppResult<Json<Vec<TagCount>>> {
+    Ok(Json(
+        LibraryService::new(&state)
+            .tags(user.user_id, scope.workspace_id)
+            .await?,
+    ))
 }
 
 pub async fn delete_saved(

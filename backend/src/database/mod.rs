@@ -13,6 +13,7 @@ pub mod performance;
 pub mod sessions;
 pub mod users;
 pub mod workspace;
+pub mod workspaces;
 
 use std::time::Duration;
 
