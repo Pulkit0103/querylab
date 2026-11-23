@@ -90,7 +90,7 @@ async fn any_instance_cancels_any_query(pool: PgPool) {
         eprintln!("skipped: REDIS_URL is not set");
         return;
     };
-    let ((a, _), (b, _)) =
+    let ((a, a_state), (b, _)) =
         two_instances(pool, &url, |c| c.max_concurrent_queries_per_user = 1).await;
     let token = register(&a, "cancel@example.com").await;
     let (status, conn) = call(
@@ -118,25 +118,37 @@ async fn any_instance_cancels_any_query(pool: PgPool) {
         )
     };
 
-    // Instance B sees the global concurrency limit once A has registered.
-    let quick = json!({ "connection_id": connection_id, "query": "select 1" });
-    let mut limited = false;
-    for _ in 0..100 {
-        let (status, _) = call(
-            &b,
-            &token,
-            "POST",
-            "/api/query/execute",
-            Some(quick.clone()),
-        )
-        .await;
-        if status == 429 {
-            limited = true;
+    // Wait until A has registered the execution: probing from B earlier
+    // could take the only slot and make A's query the one rejected.
+    for _ in 0..200 {
+        if a_state.executions.running() > 0 || long.is_finished() {
             break;
         }
-        tokio::time::sleep(Duration::from_millis(100)).await;
+        tokio::time::sleep(Duration::from_millis(50)).await;
     }
-    assert!(limited, "the second instance never saw the running query");
+    if long.is_finished() {
+        panic!("the long query ended early: {:?}", long.await.unwrap());
+    }
+    assert_eq!(
+        a_state.executions.running(),
+        1,
+        "A never registered the query"
+    );
+
+    // Instance B sees the global concurrency limit.
+    let quick = json!({ "connection_id": connection_id, "query": "select 1" });
+    let (status, body) = call(
+        &b,
+        &token,
+        "POST",
+        "/api/query/execute",
+        Some(quick.clone()),
+    )
+    .await;
+    assert_eq!(
+        status, 429,
+        "the second instance never saw the running query: {body}"
+    );
     // Let A open its connection and publish the backend pid.
     tokio::time::sleep(Duration::from_secs(2)).await;
 
