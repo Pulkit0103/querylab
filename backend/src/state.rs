@@ -5,7 +5,10 @@ use sqlx::PgPool;
 use crate::{
     config::Config,
     middleware::{metrics::Metrics, rate_limit::RateLimiter},
-    services::{data_jobs::DataJobs, execution::ExecutionRegistry, mailer::Mailer},
+    services::{
+        data_jobs::DataJobs, execution::ExecutionRegistry, mailer::Mailer,
+        shared_state::SharedStore,
+    },
     utils::crypto::CredentialCipher,
 };
 
@@ -39,11 +42,15 @@ impl AppState {
         let cipher =
             CredentialCipher::new(&config.encryption_key, &config.previous_encryption_keys);
         let minute = Duration::from_secs(60);
-        let auth_limiter = RateLimiter::new(config.auth_rate_limit_per_minute, minute);
-        let connect_limiter = RateLimiter::new(config.target_connect_rate_limit_per_minute, minute);
-        let query_limiter = RateLimiter::new(config.query_rate_limit_per_minute, minute);
+        let auth_limiter = RateLimiter::new("auth", config.auth_rate_limit_per_minute, minute);
+        let connect_limiter = RateLimiter::new(
+            "connect",
+            config.target_connect_rate_limit_per_minute,
+            minute,
+        );
+        let query_limiter = RateLimiter::new("query", config.query_rate_limit_per_minute, minute);
         // The UI refreshes every 5 s at most; leave room for manual refreshes.
-        let monitor_limiter = RateLimiter::new(MONITOR_REFRESHES_PER_MINUTE, minute);
+        let monitor_limiter = RateLimiter::new("monitor", MONITOR_REFRESHES_PER_MINUTE, minute);
         let jobs = Arc::new(DataJobs::new(config.import_memory_budget));
         let mailer = Arc::new(Mailer::new(config.email.clone()));
         Self {
@@ -59,5 +66,21 @@ impl AppState {
             mailer,
             metrics: Arc::new(Metrics::default()),
         }
+    }
+
+    /// Shares rate limits and the execution registry with other instances
+    /// through store (Redis).
+    pub fn attach_shared(&self, store: SharedStore) {
+        for limiter in [
+            &self.auth_limiter,
+            &self.connect_limiter,
+            &self.query_limiter,
+            &self.monitor_limiter,
+        ] {
+            limiter.attach(store.clone());
+        }
+        // Entries outlive the longest request, then expire on their own.
+        self.executions
+            .attach(store, self.config.request_timeout + Duration::from_secs(60));
     }
 }

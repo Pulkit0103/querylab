@@ -955,9 +955,16 @@ The API configuration also gets a new upload limit, `IMPORT_MAX_BYTES`
 ## Phase 10 — Security, Collaboration & Deployment
 
 **Goal:** a SaaS-ready platform.
-**Status:** ◐ in progress, delivered in three parts: 10a account security,
-audit log and operations (✅ delivered); 10b workspaces and permissions
-(✅ delivered); 10c shared limits and end-to-end tests.
+**Status:** ✅ delivered in three parts: 10a account security, audit log
+and operations; 10b workspaces and permissions; 10c shared limits and
+end-to-end tests.
+
+> **Implementation notes (10c):**
+> - Redis is optional (`REDIS_URL`, keys under `REDIS_PREFIX`). When set, the four rate limiters (fixed windows, one atomic Lua `INCR`+`PEXPIRE` per hit, keys hashed with SHA-256 so no emails or ids are stored in clear) and the execution registry are shared. Registration is one Lua script that rejects duplicate execution ids and enforces the per-user concurrency limit across instances. Entries expire after the request timeout plus a minute, so a crashed instance cannot hold slots forever.
+> - Cancellation: the instance running a query publishes its backend pid; any instance marks the execution cancelled and calls `pg_cancel_backend`. The running instance reports `query_cancelled` because it also checks the shared flag.
+> - Redis failures never lock users out: each call falls back to the in-memory limiter or registry and logs a warning. `/health` reports `shared_state` (`ok`, `unavailable`, `disabled`).
+> - Imports and mock data runs keep their chunks and progress in the instance that started them, so more than one instance also needs sticky routing (see `docs/DEPLOYMENT.md`). Production stays at one instance until a Redis instance is provisioned.
+> - Browser end-to-end tests use Playwright (`frontend/e2e`) against the real API, Redis and PostgreSQL in CI: protected pages redirect, and the golden path registers, adds and tests a connection, runs a query, saves it, finds it in Saved and History, signs out and back in.
 
 > **Implementation notes (10b):**
 > - Workspace-owned: connections, connection groups, folders, saved queries and snippets. Personal (per user, possibly on shared connections): history, saved plans, migration projects, data jobs and settings. Diagram layouts are shared per connection (`user_id` is the last editor). The composite `(connection_id, user_id)` foreign keys of personal records became plain foreign keys, because members reference connections they did not create.
@@ -974,17 +981,17 @@ audit log and operations (✅ delivered); 10b workspaces and permissions
 
 | Feature | Status | Notes |
 | --- | --- | --- |
-| User authentication | ✅ | **Add:** password change, password reset by email, session list with revoke, optional TOTP 2FA |
-| Rate limiting | ◐ | In memory per instance. **Move to Redis** (Upstash) for multi-instance deployments |
+| User authentication | ✅ | Password change, password reset by email, session list with revoke, optional TOTP 2FA (10a) |
+| Rate limiting | ✅ | Shared through Redis when `REDIS_URL` is set, in memory per instance otherwise (10c) |
 | Connection isolation; credential encryption | ✅ | |
-| Read-only and read-write permissions | ◐ | Per connection today. **Add:** per-member permissions in workspaces |
-| Team workspaces | ☐ | Personal workspace by default, plus team workspaces with invitations |
-| Role-based access control | ☐ | Roles `owner`, `admin`, `editor`, `viewer`, and per-connection grants (`none`, `read`, `write`, `admin`) |
-| Shared saved queries and SQL snippets | ☐ | Queries and collections shared in a workspace; snippets as reusable templates with placeholders |
-| Database access permissions | ☐ | Members use shared connections without ever seeing the credentials |
-| Query audit logs | ☐ | Append-only events for executions, privileged operations, permission changes and logins |
-| Production monitoring; error tracking | ◐ | Structured logs and request ids exist. **Add:** a metrics endpoint and a hook for an error-tracking service |
-| Automated tests | ✅ | **Extend:** permission matrix tests and browser end-to-end tests in CI |
+| Read-only and read-write permissions | ✅ | Per connection, plus per-member grants in workspaces (10b) |
+| Team workspaces | ✅ | Personal workspace by default, plus team workspaces with invitations (10b) |
+| Role-based access control | ✅ | Roles `owner`, `admin`, `editor`, `viewer`, and per-connection grants (`none`, `read`, `write`, `admin`) (10b) |
+| Shared saved queries and SQL snippets | ✅ | Queries and folders shared in a workspace; snippets with `{{placeholders}}` (10b) |
+| Database access permissions | ✅ | Members use shared connections without ever seeing the credentials (10b) |
+| Query audit logs | ✅ | Append-only events for executions, privileged operations, permission changes and logins (10a) |
+| Production monitoring; error tracking | ✅ | `/metrics` (Prometheus, token required) and an error webhook (10a) |
+| Automated tests | ✅ | Permission matrix over the connection endpoints, multi-instance tests with Redis, and Playwright end-to-end tests in CI |
 
 **Design**
 - **Workspaces:**
@@ -1123,7 +1130,7 @@ disabled placeholders.
 | Rust integration tests | `#[sqlx::test]` with the seeded sample database in CI | Every new endpoint: happy path, validation, ownership (404 for other users), privileged guards, limits |
 | Frontend unit tests | Vitest | Stores and pure logic (filter model, change sets, cardinality) |
 | Frontend component tests | Vitest + Testing Library (jsdom) | Dialogs, builders and confirmation flows |
-| Browser end-to-end tests | Headless browser against a local stack | One golden path per phase, added to CI in Phase 10 |
+| Browser end-to-end tests | Playwright against the real stack (`npm run e2e`, CI job `e2e`) | The golden path; extended as flows change |
 | Security tests | `tests/security_api.rs` pattern | Injection fuzzing for generated SQL, cross-user access, production guardrails |
 
 **Definition of done for every phase:**
@@ -1141,11 +1148,11 @@ disabled placeholders.
 | Concern | Plan |
 | --- | --- |
 | Topology | Vercel (frontend, `/api` rewrite) → Render or Railway (API container) → Neon (metadata). See `docs/DEPLOYMENT.md`. |
-| Instance count | **1** until Phase 10 moves limits and the execution registry to Redis |
+| Instance count | **1** by default. With `REDIS_URL`, limits and the execution registry are shared (Phase 10c); imports also need sticky routing before scaling out. |
 | Migrations | Embedded and applied at startup. Changes must be additive and backwards compatible within a release: new columns get defaults, and nothing is dropped in the same release. |
 | Upload sizes (Phase 9) | Decided: imports upload in 4 MiB chunks through the normal `/api` rewrite, so request body limits do not apply. Exports stream through the rewrite; very large exports are bounded by the platform's response duration limit, which is measured after deploying. |
 | Long requests | Monitoring and diff requests are short-lived. Imports, mock data and large exports run as jobs with polling, which avoids proxy timeouts. |
 | Secrets | `ENCRYPTION_KEY` is required. Redis credentials (Phase 10) and the email provider key (invitations) are new. |
-| Observability | JSON logs with request and user ids exist. Phase 10 adds `/metrics` and an error-tracking hook. Alert on `level=ERROR` until then. |
+| Observability | JSON logs with request and user ids, `/metrics` (token required) and an error webhook (`ERROR_WEBHOOK_URL`). |
 | Free-tier cold starts | Render free instances sleep. Options: a keep-alive ping, a paid instance, or clearer "server waking up" handling in the client. |
 | Data protection | Audit log retention and history retention are configurable. Exported files are never stored server-side. |

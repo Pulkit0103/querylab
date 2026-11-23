@@ -1,15 +1,16 @@
-//! In-memory fixed-window rate limiter.
+//! Fixed-window rate limiter.
 //!
-//! Suitable for a single API instance. For horizontally scaled deployments,
-//! back it with Redis (the interface is intentionally small to allow that).
+//! With a shared store attached (Redis, `REDIS_URL`), windows are counted
+//! across every API instance. Without one, or when the store fails, windows
+//! are counted in this instance's memory.
 
 use std::{
     collections::HashMap,
-    sync::Mutex,
+    sync::{Mutex, OnceLock},
     time::{Duration, Instant},
 };
 
-use crate::errors::AppError;
+use crate::{errors::AppError, services::shared_state::SharedStore};
 
 /// Entries are pruned when the map grows beyond this size.
 const PRUNE_THRESHOLD: usize = 10_000;
@@ -20,23 +21,49 @@ struct Window {
 }
 
 pub struct RateLimiter {
+    /// Name of the limit in the shared store (`auth`, `query`, ...).
+    bucket: &'static str,
     limit: u32,
     period: Duration,
     windows: Mutex<HashMap<String, Window>>,
+    shared: OnceLock<SharedStore>,
 }
 
 impl RateLimiter {
-    pub fn new(limit: u32, period: Duration) -> Self {
+    pub fn new(bucket: &'static str, limit: u32, period: Duration) -> Self {
         Self {
+            bucket,
             limit,
             period,
             windows: Mutex::new(HashMap::new()),
+            shared: OnceLock::new(),
         }
+    }
+
+    /// Counts hits in the shared store from now on.
+    pub fn attach(&self, store: SharedStore) {
+        let _ = self.shared.set(store);
     }
 
     /// Records a hit for `key`; errors with `RateLimited` once the limit for
     /// the current window is exceeded.
-    pub fn check(&self, key: &str) -> Result<(), AppError> {
+    pub async fn check(&self, key: &str) -> Result<(), AppError> {
+        if self.limit == 0 {
+            return Ok(());
+        }
+        if let Some(store) = self.shared.get() {
+            match store.hit(self.bucket, key, self.period).await {
+                Ok((count, ttl_ms)) if count > u64::from(self.limit) => {
+                    return Err(AppError::RateLimited {
+                        retry_after_secs: ttl_ms.div_ceil(1000).max(1),
+                    })
+                }
+                Ok(_) => return Ok(()),
+                Err(err) => {
+                    tracing::warn!(bucket = self.bucket, error = %err, "shared rate limit unavailable; counting locally");
+                }
+            }
+        }
         self.check_at(key, Instant::now())
     }
 
@@ -73,7 +100,7 @@ mod tests {
 
     #[test]
     fn limits_within_window_and_resets() {
-        let rl = RateLimiter::new(2, Duration::from_secs(60));
+        let rl = RateLimiter::new("test", 2, Duration::from_secs(60));
         let t0 = Instant::now();
         assert!(rl.check_at("ip", t0).is_ok());
         assert!(rl.check_at("ip", t0).is_ok());
@@ -87,11 +114,11 @@ mod tests {
         assert!(rl.check_at("ip", t0 + Duration::from_secs(61)).is_ok());
     }
 
-    #[test]
-    fn zero_limit_disables() {
-        let rl = RateLimiter::new(0, Duration::from_secs(1));
+    #[tokio::test]
+    async fn zero_limit_disables() {
+        let rl = RateLimiter::new("test", 0, Duration::from_secs(1));
         for _ in 0..100 {
-            assert!(rl.check("k").is_ok());
+            assert!(rl.check("k").await.is_ok());
         }
     }
 }

@@ -66,7 +66,10 @@ impl<'a> SchemaService<'a> {
 
     /// Opens a read-only introspection connection for a connection the user owns.
     pub(crate) async fn open(&self, user_id: Uuid, connection_id: Uuid) -> AppResult<PgConnection> {
-        self.state.connect_limiter.check(&user_id.to_string())?;
+        self.state
+            .connect_limiter
+            .check(&user_id.to_string())
+            .await?;
         let service = ConnectionService::new(self.state);
         let record = service.get_record(user_id, connection_id).await?;
         let secret = service.decrypt_secret(&record)?;

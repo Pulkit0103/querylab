@@ -43,7 +43,8 @@ pub async fn change_password(
 ) -> AppResult<Json<serde_json::Value>> {
     state
         .auth_limiter
-        .check(&format!("password:{}", user.user_id))?;
+        .check(&format!("password:{}", user.user_id))
+        .await?;
     let revoked = AccountService::new(&state)
         .change_password(&user, req.current_password, req.new_password)
         .await?;
@@ -91,7 +92,8 @@ pub async fn totp_verify(
 ) -> AppResult<Response> {
     state
         .auth_limiter
-        .check(&format!("totp:{}", user.user_id))?;
+        .check(&format!("totp:{}", user.user_id))
+        .await?;
     let codes: RecoveryCodes = AccountService::new(&state)
         .totp_confirm(&user, &req.code)
         .await?;
@@ -105,7 +107,8 @@ pub async fn recovery_codes(
 ) -> AppResult<Response> {
     state
         .auth_limiter
-        .check(&format!("totp:{}", user.user_id))?;
+        .check(&format!("totp:{}", user.user_id))
+        .await?;
     let codes = AccountService::new(&state)
         .regenerate_recovery_codes(&user, &req.code)
         .await?;
@@ -119,7 +122,8 @@ pub async fn totp_disable(
 ) -> AppResult<StatusCode> {
     state
         .auth_limiter
-        .check(&format!("totp:{}", user.user_id))?;
+        .check(&format!("totp:{}", user.user_id))
+        .await?;
     AccountService::new(&state)
         .totp_disable(&user, req.password, &req.code)
         .await?;
@@ -132,7 +136,7 @@ pub async fn request_reset(
     ClientIp(ip): ClientIp,
     ValidatedJson(req): ValidatedJson<ResetRequest>,
 ) -> AppResult<StatusCode> {
-    state.auth_limiter.check(&format!("reset-ip:{ip}"))?;
+    state.auth_limiter.check(&format!("reset-ip:{ip}")).await?;
     AccountService::new(&state)
         .request_reset(&req.email)
         .await?;
@@ -144,7 +148,7 @@ pub async fn check_reset(
     ClientIp(ip): ClientIp,
     ApiQuery(q): ApiQuery<ResetCheckQuery>,
 ) -> AppResult<Json<serde_json::Value>> {
-    state.auth_limiter.check(&format!("reset-ip:{ip}"))?;
+    state.auth_limiter.check(&format!("reset-ip:{ip}")).await?;
     let valid = AccountService::new(&state)
         .reset_token_is_valid(&q.token)
         .await?;
@@ -156,7 +160,7 @@ pub async fn confirm_reset(
     ClientIp(ip): ClientIp,
     ValidatedJson(req): ValidatedJson<ResetConfirmRequest>,
 ) -> AppResult<StatusCode> {
-    state.auth_limiter.check(&format!("reset-ip:{ip}"))?;
+    state.auth_limiter.check(&format!("reset-ip:{ip}")).await?;
     AccountService::new(&state)
         .confirm_reset(&req.token, req.new_password)
         .await?;

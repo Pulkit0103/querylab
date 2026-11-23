@@ -29,6 +29,7 @@ querylab/
 Browser ──► Next.js (Vercel) ──rewrite /api/*──► Rust API (Railway/Render)
                                                    │
                                                    ├──► Metadata PostgreSQL (users, connections, history)
+                                                   ├──► Redis, optional (shared rate limits and running queries)
                                                    └──► User target databases (dedicated, short-lived connections)
 ```
 
@@ -91,8 +92,16 @@ cd backend && cargo test
 DATABASE_URL=postgres://querylab:querylab@localhost:5432/querylab \
   cargo test -- --include-ignored
 
+# Backend: multi-instance tests (shared limits, cross-instance cancel)
+# also need Redis: docker compose --profile redis up -d
+REDIS_URL=redis://127.0.0.1:6379 cargo test --test shared_state_api -- --include-ignored
+
 # Frontend
 cd frontend && npm run lint && npm run typecheck && npm test && npm run build
+
+# Browser end-to-end (Playwright). Needs the API running with
+# ALLOW_PRIVATE_NETWORKS=true; E2E_DATABASE_URL is the target database used.
+cd frontend && npx playwright install chromium && npm run build && npm run e2e
 ```
 
 ## Backend architecture

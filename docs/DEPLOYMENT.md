@@ -191,13 +191,26 @@ After every production deploy, check all of the following:
 
 ## Scaling notes
 
-- Rate limits and the per-user concurrency limit are held **in memory**.
-  So are the registry used to cancel running queries and the files and
-  progress of running imports and mock data runs (finished jobs are stored
-  in `data_jobs`; jobs interrupted by a restart are marked failed).
-- Run **one API instance**. Both blueprints pin replicas to 1.
-- To scale out, move the limiter and registry to Redis (e.g. Upstash) and
-  route cancellation to the instance running the query.
+- Without `REDIS_URL`, rate limits, the per-user concurrency limit and the
+  registry used to cancel running queries are held **in memory**, per
+  instance. Run **one API instance** in that case; both blueprints pin
+  replicas to 1.
+- With `REDIS_URL` set (e.g. an Upstash `rediss://` URL), all four rate
+  limiters, the concurrency limit and the execution registry live in Redis.
+  The registry stores each query's backend pid, so any instance can cancel
+  a query running on another. `GET /health` reports
+  `"shared_state":"ok"` (or `"unavailable"`; `"disabled"` without Redis).
+  `REDIS_PREFIX` (default `querylab`) separates several deployments sharing
+  one Redis.
+- If Redis is unreachable at startup the API logs an error and falls back
+  to per-instance state. If it fails later, limits fail open (a local
+  limiter takes over) so an outage never locks users out.
+- Imports and mock data runs still keep their upload chunks and progress
+  in the memory of the instance that started them (finished jobs are
+  stored in `data_jobs`; jobs interrupted by a restart are marked failed).
+  Before raising the instance count, make sure the platform routes a
+  user's requests to one instance (sticky sessions), or uploads can land
+  on an instance that does not have the job.
 - Vertical scaling is straightforward. The metadata pool is small. Each
   query uses its own short-lived connection to the target database, so
   load on target databases tracks `MAX_CONCURRENT_QUERIES_PER_USER` × the

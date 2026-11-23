@@ -288,7 +288,10 @@ impl<'a> DataStudioService<'a> {
         connection_id: Uuid,
         req: &BrowseRequest,
     ) -> AppResult<BrowseResponse> {
-        self.state.query_limiter.check(&user.user_id.to_string())?;
+        self.state
+            .query_limiter
+            .check(&user.user_id.to_string())
+            .await?;
         let cursor = req.cursor.as_deref().map(Cursor::decode).transpose()?;
         let (mut conn, record, access) = self.open_read_only(user.user_id, connection_id).await?;
         let (table, oid) = load_table(&mut conn, &req.schema, &req.table).await?;
@@ -437,7 +440,8 @@ impl<'a> DataStudioService<'a> {
     ) -> AppResult<PreviewResponse> {
         self.state
             .connect_limiter
-            .check(&user.user_id.to_string())?;
+            .check(&user.user_id.to_string())
+            .await?;
         let (mut conn, _, _) = self.open_read_only(user.user_id, connection_id).await?;
         let loaded = load_table(&mut conn, &req.schema, &req.table).await;
         close(conn).await;
@@ -477,7 +481,10 @@ impl<'a> DataStudioService<'a> {
         connection_id: Uuid,
         req: &ApplyRequest,
     ) -> AppResult<ApplyResponse> {
-        self.state.query_limiter.check(&user.user_id.to_string())?;
+        self.state
+            .query_limiter
+            .check(&user.user_id.to_string())
+            .await?;
         let record = ConnectionService::new(self.state)
             .require(user.user_id, connection_id, Access::Write)
             .await?

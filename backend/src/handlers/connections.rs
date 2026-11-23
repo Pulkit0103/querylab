@@ -76,7 +76,10 @@ pub async fn test_draft(
     user: AuthUser,
     ValidatedJson(req): ValidatedJson<CreateConnectionRequest>,
 ) -> AppResult<Json<ConnectionTestResult>> {
-    state.connect_limiter.check(&user.user_id.to_string())?;
+    state
+        .connect_limiter
+        .check(&user.user_id.to_string())
+        .await?;
     network::precheck(
         req.host.trim(),
         req.port,
@@ -92,7 +95,10 @@ pub async fn test_saved(
     user: AuthUser,
     ApiPath(id): ApiPath<Uuid>,
 ) -> AppResult<Json<ConnectionTestResult>> {
-    state.connect_limiter.check(&user.user_id.to_string())?;
+    state
+        .connect_limiter
+        .check(&user.user_id.to_string())
+        .await?;
     let result = ConnectionService::new(&state)
         .test_saved(user.user_id, id)
         .await?;

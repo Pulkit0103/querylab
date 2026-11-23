@@ -99,7 +99,8 @@ impl<'a> MonitoringService<'a> {
     async fn connect(&self, record: &ConnectionRecord, read_only: bool) -> AppResult<PgConnection> {
         self.state
             .connect_limiter
-            .check(&record.user_id.to_string())?;
+            .check(&record.user_id.to_string())
+            .await?;
         let service = ConnectionService::new(self.state);
         let secret = service.decrypt_secret(record)?;
         let mut spec = TargetSpec::from_record(record, &secret);
@@ -121,7 +122,8 @@ impl<'a> MonitoringService<'a> {
             .await?;
         self.state
             .monitor_limiter
-            .check(&format!("{user_id}:{connection_id}:{}", view.key()))?;
+            .check(&format!("{user_id}:{connection_id}:{}", view.key()))
+            .await?;
         let conn = self.connect(&record, true).await?;
         Ok((record, conn))
     }

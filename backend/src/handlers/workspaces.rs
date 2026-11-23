@@ -158,7 +158,8 @@ pub async fn accept_invitation(
 ) -> AppResult<Json<WorkspaceSummary>> {
     state
         .auth_limiter
-        .check(&format!("invite:{}", user.user_id))?;
+        .check(&format!("invite:{}", user.user_id))
+        .await?;
     Ok(Json(
         WorkspaceService::new(&state).accept(&user, &token).await?,
     ))
